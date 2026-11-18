@@ -1,0 +1,13 @@
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.idea/
+*.iml
+.DS_Store
+coverage/
+verify_logs/
+installer/output/
+installer/redist/*.exe
+.metadata

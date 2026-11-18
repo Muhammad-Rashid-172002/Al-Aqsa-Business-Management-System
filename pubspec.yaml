@@ -1,0 +1,38 @@
+name: al_aqsa_cctv
+description: AL-AQSA CCTV & SOLAR SYSTEM - offline business management system (Windows desktop).
+publish_to: "none"
+version: 1.1.0+2
+
+environment:
+  sdk: ">=3.7.0 <4.0.0"
+  flutter: ">=3.35.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.6.1
+  hive_ce: ^2.11.0
+  path_provider: ^2.1.5
+  path: ^1.9.0
+  crypto: ^3.0.6
+  # pdf 3.11.2-3.12.x (the newest pdf usable on Dart 3.11) caps archive <4.1.0.
+  archive: ^4.0.9
+  # image 4.11.0 accepts archive 4.0.x but calls ZLibDecoder.decodeLazy, which only
+  # exists in archive >=4.4.0 (fixed upstream in image 4.11.1, which needs archive ^4.4.0).
+  # Exclude that one broken release; image is a transitive dependency of pdf/printing.
+  image: ">=4.1.0 <4.11.0"
+  intl: ^0.20.2
+  pdf: ^3.11.3
+  printing: ^5.14.2
+  xml: ">=6.5.0 <8.0.0"
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/branding/al_aqsa_logo.png
+    - assets/branding/al_aqsa_icon_square.png

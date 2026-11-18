@@ -1,0 +1,127 @@
+# Testing Report — 17 Nov 2026
+
+> **18 Nov — bulk serial purchase, official name, backup & restore:** see
+> `docs/BACKUP_RESTORE.md` and the user manual. Developer results: pure-Dart
+> suite **99/99 passed** on Dart 3.11.4 (new: 8 bulk-serial, 9 backup/recovery
+> tests); analysis clean on Flutter 3.41.6 (no issues) and 3.50 (only the known
+> `deprecated_member_use` infos). Widget/UI tests (including 2 new bulk-serial
+> UI tests), Windows release build and all Windows checks: **not yet run**.
+>
+> **17 Nov — USB scanner:** see `docs/SCANNER.md`. Developer results: pure-Dart
+> suite 82/82 passed (14 new scanner tests); analysis clean on Flutter 3.50 and
+> 3.41.6. The 7 POS scanner widget tests and real-scanner testing are **not yet
+> verified**.
+>
+> **17 Nov — performance work:** see `docs/PERFORMANCE_REPORT.md` for the
+> audit, the changes and measured before/after numbers. Developer results:
+> pure-Dart suite 68/68 passed on Dart 3.11.4; analysis clean on Flutter 3.50
+> (29 known deprecation infos) and on Flutter 3.41.6 (no issues). Widget,
+> responsive and build results on your Mac: **not yet verified** — run
+> `bash tool/run_tests_mac.command` and send `verify_logs/`.
+
+
+Two kinds of result are kept apart here:
+
+* **Developer results** — run by the developer in a Linux workspace with the exact Dart SDK (3.11.4) and the exact package versions.
+* **Your local results** — what `bash tool/verify_mac.sh` (Mac) or the Windows commands produce on your machine. Until you send those logs back, everything in that column is **not yet verified**.
+
+## 1. Dependency fix (PNG decoder / archive conflict)
+
+### What went wrong
+| Package | Fact (checked in each release's own pubspec) |
+|---|---|
+| image 4.11.0 | accepts `archive ^4.0.9`, but its PNG decoder calls `ZLibDecoder.decodeLazy`, which only exists from **archive 4.4.0**. With archive 4.0.9 it does not compile — this is an upstream bug. |
+| image 4.11.1 / 4.12+ | fixed, but need `archive ^4.4.0` / `^4.5.0` |
+| pdf 3.11.2 – 3.12.0 | `archive >=3.4.0 <4.1.0` |
+| pdf 3.13.0 / 3.13.1 | need **Dart SDK >= 3.12** (cannot be used on Dart 3.11.4) |
+| printing 5.14.3 | `image >=4.1.0 <=5.0.0`, `pdf ^3.10.0`; printing 5.15.x needs Dart >= 3.12 |
+
+So on Dart 3.11.4 the newest usable pdf is 3.12.0, which caps archive below 4.1.0. That rules out every fixed image release, and upgrading pdf is **not** possible without upgrading Dart. The previous `archive: ^4.4.0` could never resolve.
+
+### The fix (pubspec.yaml)
+```yaml
+archive: ^4.0.9                 # pdf 3.11.2-3.12.x caps archive <4.1.0
+image: ">=4.1.0 <4.11.0"        # skip the one broken release (4.11.0)
+```
+`image` was already in the app as a dependency of pdf/printing; it is now listed directly so the broken release can be excluded. No `dependency_overrides`, no Flutter/Dart change, and no code or data-format change (image 4.10.x has the same API the pdf package uses).
+
+### Proof (developer)
+Resolved with real `dart pub get` (Dart **3.11.4**, Flutter 3.41.6 SDK packages, a local package server holding the published packages from your own pub cache plus the other candidate releases). There were **no overrides** in the pubspec.
+
+* The old pubspec reproduced your exact error: "pdf <3.13.0 depends on archive >=3.4.0 <4.1.0 … version solving failed".
+* The new pubspec resolves to:
+
+| Package | Version |
+|---|---|
+| archive | 4.0.9 |
+| image | 4.10.2 |
+| pdf | 3.12.0 |
+| printing | 5.14.3 |
+| xml | 6.6.1 |
+| petitparser | 7.0.2 |
+| hive_ce | 2.23.3 |
+| flutter_riverpod | 2.6.1 |
+| path_provider | 2.1.6 |
+| intl | 0.20.3 |
+| crypto | 3.0.8 |
+| barcode / qr / bidi | 2.2.9 / 3.0.3 / 2.0.13 |
+
+## 2. Developer results (Linux, Dart 3.11.4, versions above)
+
+| Check | Result |
+|---|---|
+| `dart pub get` (no overrides) | ✅ resolved |
+| `dart pub deps` | ✅ image 4.10.2 → archive 4.0.9; pdf 3.12.0 → archive, image, xml |
+| Static analysis, whole app incl. UI (Flutter 3.41.6 framework source, flutter_lints 5.0.0) | ✅ No issues found |
+| Business / scenario / export / PDF tests | ✅ **60 / 60 passed** |
+| New PNG regression test, run against the broken combination (image 4.11.0 + archive 4.0.9) | ✅ fails with your original error: `The method 'decodeLazy' isn't defined for the type 'ZLibDecoder'` — so the test really guards the bug |
+| `widget_test.dart` | ⚠️ analysed only. Running it needs the Flutter engine, which this workspace doesn't have; it runs in your `flutter test`. |
+| `flutter build macos` / `flutter build windows` | ⚠️ cannot run here — **yours to run** |
+
+| Suite | Tests | Covers |
+|---|---|---|
+| money_test | 6 | money/qty maths, rounding, password hashing |
+| workflow_test | 4 | full shop scenario, FIFO, landed cost, monthly report |
+| rules_test | 17 | the 10 business rules, roles, warranty, repairs, ledgers |
+| backup_store_test | 2 | backup → restore, damaged backup rejected, crash-journal replay |
+| clarified_rules_test | 13 | decimals, brand+serial duplicates, inspection, warranty policy, owner-approved credit, v1→v2 migration |
+| export_print_test | **5** | XLSX/CSV round-trip, Excel import, every PDF document (A4/80 mm/58 mm), **NEW: PNG logo decoded and embedded as an image in printed PDFs** |
+| reports_settings_test | 4 | all 29 reports, settings validation, held bills, expired quotation |
+| scenarios_test | 6 | Scenarios A–F (F uses real Hive files: restart, backup, restore) |
+| app_paths_test | 3 | Windows data folder, AQSA_DATA_DIR override, single-instance lock |
+| widget_test | 1 | login → dashboard (runs on your machine only) |
+
+Every scenario ends with `IntegrityService.check()` reporting no issues.
+
+### 2x. Reports / expenses / P&L round (18 Nov)
+- Pure-Dart suite (my run, Linux, Dart 3.11.4): **107/107 passed**, including 8 new tests in `finance_reports_test.dart`:
+  - P&L with discounts, partial payments, a return, a cancelled invoice and two purchase costs
+  - expense CRUD and history
+  - every report with and without filters, and on an empty shop
+  - XLSX validity and formats
+  - a 1,200-row PDF
+- `dart analyze` on Flutter 3.41.6: no issues. On Flutter 3.50: only `deprecated_member_use` infos.
+- **Not run here:** the widget tests, including the new `finance_ui_test.dart`, because the Flutter engine is unavailable in my environment. Run `bash tool/run_tests_mac.command` locally.
+
+## 3. Your local results (Mac)
+Dependency-fix run, from your `verify_logs/` on 16 Nov (read by the developer from the files on your Mac): pub get ✅, deps ✅, analyze ✅, `flutter test` ✅ **61/61 passed** (incl. `widget_test.dart` and `export_print_test.dart`), `flutter build macos --release` ✅ (`al_aqsa_cctv.app`, 52 MB). `key_versions.txt` matches section 1.
+
+### 3b. Responsive UI round (see RESPONSIVE_UI_AUDIT.md)
+| Check | Who | Result |
+|---|---|---|
+| Static analysis incl. `test/responsive_test.dart` | developer | ✅ No issues |
+| Business tests (Dart 3.11.4) | developer | ✅ 60/60 |
+| `flutter test` incl. the 65 new responsive tests | you | ☐ pending: run `bash tool/run_tests_mac.command` (logs in `verify_logs/ui_*.txt`) |
+
+### 3c. Template for the remaining local checks
+| Step | Command | Result |
+|---|---|---|
+| 03 | `flutter pub get` | ☐ |
+| 04 | `flutter pub deps --style=compact` | ☐ |
+| 05 | `flutter analyze` | ☐ |
+| 06 | `flutter test --reporter expanded` (expect 61 tests incl. widget test) | ☐ |
+| 07 | `flutter build macos --release` | ☐ |
+| — | `verify_logs/key_versions.txt` matches the table in section 1 | ☐ |
+
+## 4. Still unverified (needs real hardware)
+Thermal printer (80/58 mm) output and cutter, label printer, barcode scanner input in POS, USB backup drive, Windows installer, and the Windows build itself — see RELEASE_CHECKLIST.md.
