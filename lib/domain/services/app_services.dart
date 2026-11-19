@@ -11,6 +11,7 @@ import '../../core/qty.dart';
 import '../models/documents.dart';
 import '../models/party.dart';
 import '../models/product.dart';
+import 'permanent_delete_service.dart';
 import 'auth_service.dart';
 import 'backup_service.dart';
 import 'catalog_service.dart';
@@ -48,6 +49,7 @@ class AppServices {
   late final IntegrityService integrity = IntegrityService(ctx);
   late final SettingsService settings = SettingsService(ctx);
   late final ExpenseService expenses = ExpenseService(ctx);
+  late final PermanentDeleteService erase = PermanentDeleteService(ctx);
   final BackupService backup;
 
   /// Folder inside the app data folder where product photos and the shop

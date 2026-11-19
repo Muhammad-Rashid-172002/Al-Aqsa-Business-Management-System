@@ -9,6 +9,7 @@ import '../../domain/models/user.dart';
 import '../../export/tabular.dart';
 import '../../printing/pdf_docs.dart';
 import '../print_actions.dart';
+import '../record_actions.dart';
 import '../providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -98,7 +99,12 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
                 AppColumn('Total', numeric: true, (s0) => Text(s0.total.format())),
                 AppColumn('Balance', numeric: true, (s0) => Text(s0.remaining.isPositive ? s0.remaining.format() : '—', style: TextStyle(color: s0.remaining.isPositive ? c.warning : c.textMuted))),
                 AppColumn('Status', (s0) => StatusPill(s0.status == DocStatus.draft ? 'held' : s0.status.name, s0.status == DocStatus.cancelled ? c.danger : (s0.status == DocStatus.draft ? c.warning : c.accent))),
-              ],
+actionsColumn<Sale>((s0) => RowActionsMenu(
+                    onView: s0.status == DocStatus.draft ? null : () => showInvoiceDetail(context, ref, s0.id),
+                    onEdit: s0.status == DocStatus.draft ? () => _openDraft(s0) : null,
+                    onDelete: s0.status == DocStatus.draft || (s0.status == DocStatus.completed && app.ctx.can(Permission.cancelTransactions)) ? () => deleteSaleRecord(context, ref, s0) : null,
+                  )),
+],
             ),
           ),
         ),
@@ -123,7 +129,9 @@ class _InvoiceDetail extends ConsumerWidget {
     final c = AppTheme.of(context);
     final app = ref.watch(liveServicesProvider);
     final user = ref.watch(currentUserProvider)!;
-    final s0 = app.sales.byId(saleId)!;
+    final found = app.sales.byId(saleId);
+    if (found == null) return const RecordGone('invoice');
+    final s0 = found;
     final customer = s0.customerId == null ? null : app.parties.byId(PartyKind.customer, s0.customerId!);
     final st = app.ctx.settings;
     final returns = app.sales.returns().where((r) => r.originalId == s0.id).toList();

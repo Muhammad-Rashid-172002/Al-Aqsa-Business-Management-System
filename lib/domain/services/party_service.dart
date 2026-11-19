@@ -34,7 +34,7 @@ class PartyService {
     return ctx.all(_box(kind), Party.fromJson).where((p) {
       if (!includeInactive && !p.active) return false;
       if (q.isEmpty) return true;
-      return p.name.toLowerCase().contains(q) || p.phone.contains(q) || p.company.toLowerCase().contains(q);
+      return p.name.toLowerCase().contains(q) || p.phone.contains(q) || p.altPhone.contains(q) || p.company.toLowerCase().contains(q);
     }).toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   }
@@ -56,6 +56,7 @@ class PartyService {
     String company = '',
     String contactPerson = '',
     String phone = '',
+    String altPhone = '',
     String address = '',
     String email = '',
     Money openingBalance = const Money.zero(),
@@ -75,6 +76,7 @@ class PartyService {
       company: company.trim(),
       contactPerson: contactPerson.trim(),
       phone: ph,
+      altPhone: altPhone.trim(),
       address: address.trim(),
       email: email.trim(),
       openingBalance: openingBalance,
@@ -110,6 +112,7 @@ class PartyService {
         company: p.company,
         contactPerson: p.contactPerson,
         phone: p.phone,
+        altPhone: p.altPhone.trim(),
         address: p.address,
         email: p.email,
         notes: p.notes,
@@ -118,6 +121,49 @@ class PartyService {
     ctx.audit(uow, 'update', p.kind.name, p.id);
     await uow.commit();
     return saved;
+  }
+
+  /// True when the customer/supplier appears in any transaction, payment,
+  /// ledger entry, quotation, repair, warranty claim or serial record.
+  bool hasHistory(PartyKind kind, String id) {
+    const keys = ['partyId', 'customerId', 'supplierId'];
+    for (final box in const [Boxes.ledger, Boxes.payments, Boxes.sales, Boxes.purchases, Boxes.salesReturns, Boxes.purchaseReturns, Boxes.quotations, Boxes.repairs, Boxes.warrantyClaims, Boxes.serials, Boxes.techTxns]) {
+      for (final j in ctx.store.values(box)) {
+        for (final k in keys) {
+          if (j[k] == id) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// Deletes a customer/supplier with no history and a zero balance;
+  /// otherwise archives it (inactive: hidden from lists and pickers, while
+  /// the ledger, invoices and reports keep it). Returns true when archived.
+  Future<bool> deleteOrArchive(PartyKind kind, String id) async {
+    ctx.require(_perm(kind));
+    final uow = ctx.uow();
+    final p = require(uow, kind, id);
+    if (!p.balance.isZero || hasHistory(kind, id)) {
+      uow.put(_box(kind), id, p.copyWith(active: false).toJson());
+      ctx.audit(uow, 'archive', kind.name, id, p.name);
+      await uow.commit();
+      return true;
+    }
+    uow.delete(_box(kind), id);
+    ctx.audit(uow, 'delete', kind.name, id, p.name);
+    await uow.commit();
+    return false;
+  }
+
+  /// Makes an archived customer/supplier active again.
+  Future<void> restore(PartyKind kind, String id) async {
+    ctx.require(_perm(kind));
+    final uow = ctx.uow();
+    final p = require(uow, kind, id);
+    uow.put(_box(kind), id, p.copyWith(active: true).toJson());
+    ctx.audit(uow, 'restore', kind.name, id, p.name);
+    await uow.commit();
   }
 
   /// Appends a ledger entry and updates the cached party balance.
@@ -322,6 +368,54 @@ class PartyService {
     return PartyStatement(p, opening, lines, running);
   }
 
+  /// Per customer / supplier: how much they paid (net of refunds and voided
+  /// payments) and how much they were billed in total (balance + paid, i.e.
+  /// invoices, opening balance and adjustments net of returns and
+  /// cancellations). Read from the ledger; cached until it changes.
+  Map<String, PartyTotals> accountTotals(PartyKind kind) => ctx.derived('accountTotals_${kind.name}', const [Boxes.ledger, Boxes.customers, Boxes.suppliers], () {
+        final paid = <String, int>{};
+        final last = <String, DateTime>{};
+        for (final e in ctx.all(Boxes.ledger, LedgerEntry.fromJson)) {
+          if (e.partyKind != kind) continue;
+          final isPayment = e.type == LedgerType.payment || e.type == LedgerType.refund || e.refType == 'payment_void';
+          if (!isPayment) continue;
+          // Customers pay with a credit entry; suppliers are paid with a debit.
+          final v = kind == PartyKind.customer ? e.credit.paisa - e.debit.paisa : e.debit.paisa - e.credit.paisa;
+          paid[e.partyId] = (paid[e.partyId] ?? 0) + v;
+          if (e.type == LedgerType.payment && (last[e.partyId] == null || e.at.isAfter(last[e.partyId]!))) last[e.partyId] = e.at;
+        }
+        return {
+          for (final p in list(kind, includeInactive: true))
+            p.id: PartyTotals(paid: Money(paid[p.id] ?? 0), billed: p.balance + Money(paid[p.id] ?? 0), lastPayment: last[p.id]),
+        };
+      });
+
+  /// The customer for a bill typed at the POS: an existing one with the same
+  /// mobile number (0300…, +92 300…, 92300… all match), otherwise a new
+  /// customer saved with this name and number.
+  Future<Party> findOrCreateCustomer({String name = '', String phone = ''}) async {
+    final n = name.trim();
+    final ph = phone.trim();
+    if (n.isEmpty && ph.isEmpty) throw const ValidationException('Enter the customer\'s name or mobile number.');
+    final key = phoneKey(ph);
+    if (key.isNotEmpty) {
+      for (final p in list(PartyKind.customer)) {
+        if (phoneKey(p.phone) == key || phoneKey(p.altPhone) == key) return p;
+      }
+    }
+    return create(kind: PartyKind.customer, name: n.isEmpty ? 'Customer $ph' : n, phone: ph);
+  }
+
+  /// Digits of a phone number in one comparable form (Pakistani numbers
+  /// as 03XXXXXXXXX). Empty when there are too few digits to compare.
+  static String phoneKey(String phone) {
+    var d = phone.replaceAll(RegExp(r'\D'), '');
+    if (d.startsWith('0092')) d = d.substring(2);
+    if (d.startsWith('92') && d.length == 12) d = '0${d.substring(2)}';
+    if (d.length == 10 && d.startsWith('3')) d = '0$d';
+    return d.length >= 7 ? d : '';
+  }
+
   Money totalReceivables() => Money.sum(list(PartyKind.customer, includeInactive: true).map((p) => p.balance).where((b) => b.isPositive));
   Money totalPayables() => Money.sum(list(PartyKind.supplier, includeInactive: true).map((p) => p.balance).where((b) => b.isPositive));
 
@@ -334,4 +428,11 @@ class PartyService {
         return true;
       }).toList()
         ..sort((a, b) => b.at.compareTo(a.at));
+}
+
+class PartyTotals {
+  final Money paid; // received from a customer / paid to a supplier
+  final Money billed; // balance + paid
+  final DateTime? lastPayment;
+  const PartyTotals({required this.paid, required this.billed, this.lastPayment});
 }

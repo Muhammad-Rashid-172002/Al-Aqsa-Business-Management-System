@@ -187,7 +187,9 @@ Future<void> showRepairDetail(BuildContext context, WidgetRef ref, String id) =>
       builder: (ctx) => Consumer(builder: (ctx, ref, _) {
         final c = AppTheme.of(ctx);
         final app = ref.watch(liveServicesProvider);
-        final j = app.repairs.list().firstWhere((x) => x.id == id);
+        final j0 = app.repairs.list().where((x) => x.id == id).firstOrNull;
+        if (j0 == null) return const RecordGone('repair job');
+        final j = j0;
         final canManage = app.ctx.can(Permission.manageRepairs);
         final techs = {for (final t in app.technicians.technicians(includeInactive: true)) t.id: t.name};
         final st = app.ctx.settings;

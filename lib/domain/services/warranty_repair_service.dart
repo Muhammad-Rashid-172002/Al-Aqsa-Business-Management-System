@@ -127,7 +127,7 @@ class WarrantyService {
     final old = serials.resolve(uow, c.serial, c.productId);
     final repl = serials.requireAll(uow, [newSerial], old.productId, {SerialStatus.inStock}, 'replacement').first;
     final ref = c.id;
-    inv.stockOut(uow, productId: old.productId, qty: const Qty.one(), type: 'warrantyReplacement', refType: 'warranty', refId: ref, reason: c.number);
+    inv.stockOut(uow, productId: old.productId, qty: const Qty.one(), type: 'warrantyReplacement', refType: 'warranty', refId: ref, reason: c.number, units: [repl]);
     inv.changeBucket(uow, old.productId, StockBucket.damaged, const Qty.one(), 'warrantyReplacement', 'warranty', ref, 'Faulty unit ${old.display}');
     serials.save(uow,
         old.transition(SerialStatus.damaged, at: ctx.now(), note: 'Replaced by ${repl.display} (${c.number})', refType: 'warranty', refId: ref, userId: ctx.userId, clearCustomer: true));

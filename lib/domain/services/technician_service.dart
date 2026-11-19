@@ -104,6 +104,34 @@ class TechnicianService {
     return e;
   }
 
+  /// Deletes a technician with no history; archives (deactivates, login
+  /// disabled) one with material transactions or repair jobs. Refused while
+  /// the technician still holds material. Returns true when archived.
+  Future<bool> deleteOrArchive(String id) async {
+    ctx.require(Permission.manageTechnicians);
+    final uow = ctx.uow();
+    final e = requireTech(uow, id);
+    final holds = ctx.store.values(Boxes.techHoldings).map(TechHolding.fromJson).where((h) => h.technicianId == id && h.qty.milli != 0);
+    if (holds.isNotEmpty) {
+      throw BusinessException('${e.name} still holds material. Return it or record it as installed first.');
+    }
+    final history = ctx.store.values(Boxes.techTxns).any((j) => j['technicianId'] == id) || ctx.store.values(Boxes.repairs).any((j) => j['technicianId'] == id);
+    if (e.userId != null) {
+      final uj = uow.read(Boxes.users, e.userId!);
+      if (uj != null) uow.put(Boxes.users, e.userId!, AppUser.fromJson(uj).copyWith(active: false).toJson());
+    }
+    if (history) {
+      uow.put(Boxes.employees, id, e.copyWith(active: false).toJson());
+      ctx.audit(uow, 'archive', 'technician', id, e.name);
+      await uow.commit();
+      return true;
+    }
+    uow.delete(Boxes.employees, id);
+    ctx.audit(uow, 'delete', 'technician', id, e.name);
+    await uow.commit();
+    return false;
+  }
+
   TechHolding _holding(UnitOfWork uow, String techId, String productId) {
     final j = uow.read(Boxes.techHoldings, TechHolding.keyFor(techId, productId));
     return j == null ? TechHolding(technicianId: techId, productId: productId, qty: const Qty.zero(), cost: const Money.zero()) : TechHolding.fromJson(j);
@@ -142,7 +170,7 @@ class TechnicianService {
         recs = serials.requireAll(uow, raw, p.id, {SerialStatus.inStock}, 'issuing');
       }
       final sers = recs.map((r) => r.key).toList();
-      final cost = inv.stockOut(uow, productId: p.id, qty: l.qty, type: 'techIssue', refType: 'tech_issue', refId: ref, reason: tech.name);
+      final cost = inv.stockOut(uow, productId: p.id, qty: l.qty, type: 'techIssue', refType: 'tech_issue', refId: ref, reason: tech.name, units: recs);
       inv.changeBucket(uow, p.id, StockBucket.issued, l.qty, 'techIssue', 'tech_issue', ref, tech.name, cost);
       final h = _holding(uow, technicianId, p.id);
       _saveHolding(uow, TechHolding(technicianId: technicianId, productId: p.id, qty: h.qty + l.qty, cost: h.cost + cost));
@@ -200,12 +228,17 @@ class TechnicianService {
         if (r.technicianId != technicianId) throw ValidationException('Serial "${r.display}" is not issued to ${tech.name}.');
       }
     }
-    final cost = h.costOf(qty);
+    // Serial units carry their own batch cost; other items use the average.
+    final cost = _cappedUnitsCost(recs, h) ?? h.costOf(qty);
     _saveHolding(uow, TechHolding(technicianId: technicianId, productId: productId, qty: h.qty - qty, cost: h.cost - cost));
     inv.changeBucket(uow, productId, StockBucket.issued, -qty, 'techReturn', 'tech_return', ref, '${type.label} - ${tech.name}', cost);
     String? inspectionId;
     if (type == TechTxnType.returnUnused) {
-      inv.stockIn(uow, productId: productId, qty: qty, unitCost: cost.perUnit(qty), totalCost: cost, type: 'techReturn', refType: 'tech_return', refId: ref, reason: reason);
+      if (recs.isNotEmpty) {
+        inv.stockInUnits(uow, productId: productId, units: recs, fallbackTotal: cost, type: 'techReturn', refType: 'tech_return', refId: ref, reason: reason);
+      } else {
+        inv.stockIn(uow, productId: productId, qty: qty, unitCost: cost.perUnit(qty), totalCost: cost, type: 'techReturn', refType: 'tech_return', refId: ref, reason: reason);
+      }
       for (final r in recs) {
         serials.save(uow, r.transition(SerialStatus.inStock, at: ctx.now(), note: 'Returned unused by ${tech.name}', refType: 'tech_return', refId: ref, userId: ctx.userId, clearTechnician: true));
       }
@@ -254,9 +287,10 @@ class TechnicianService {
     if (qty > h.qty) throw StockException('${tech.name} holds only ${h.qty.format()} ${p.unit} of "${p.name}".');
     final ref = newId();
     var sers = <String>[];
+    var recs = <SerialRecord>[];
     if (p.requiresSerial) {
       final raw = serials.normalizeList(serialNumbers, expectedQty: qty.wholeUnits, productName: p.name);
-      final recs = serials.requireAll(uow, raw, p.id, {SerialStatus.issuedToTechnician}, 'installation');
+      recs = serials.requireAll(uow, raw, p.id, {SerialStatus.issuedToTechnician}, 'installation');
       sers = recs.map((r) => r.key).toList();
       for (final r in recs) {
         if (r.technicianId != technicianId) throw ValidationException('Serial "${r.serial}" is not issued to ${tech.name}.');
@@ -265,7 +299,7 @@ class TechnicianService {
                 at: date ?? ctx.now(), note: 'Installed by ${tech.name} $jobRef', refType: 'tech_install', refId: ref, userId: ctx.userId, customerId: customerId));
       }
     }
-    final cost = h.costOf(qty);
+    final cost = _cappedUnitsCost(recs, h) ?? h.costOf(qty);
     _saveHolding(uow, TechHolding(technicianId: technicianId, productId: productId, qty: h.qty - qty, cost: h.cost - cost));
     inv.changeBucket(uow, productId, StockBucket.issued, -qty, 'techInstalled', 'tech_install', ref, '${tech.name} $jobRef', cost);
     final t = TechTxn(
@@ -333,4 +367,12 @@ class TechnicianService {
       holdings: hs,
     );
   }
+}
+
+/// The serial units' own batch cost, never more than the holding's cost
+/// (null when the units have no recorded cost).
+Money? _cappedUnitsCost(List<SerialRecord> recs, TechHolding h) {
+  final c = InventoryEngine.unitsCost(recs);
+  if (c == null) return null;
+  return c > h.cost ? h.cost : c;
 }

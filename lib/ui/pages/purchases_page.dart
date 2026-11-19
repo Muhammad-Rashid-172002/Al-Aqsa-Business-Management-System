@@ -14,6 +14,7 @@ import '../../domain/services/serial_service.dart';
 import '../../export/tabular.dart';
 import '../../printing/pdf_docs.dart';
 import '../print_actions.dart';
+import '../record_actions.dart';
 import '../providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -173,7 +174,11 @@ class _PurchasesPageState extends ConsumerState<PurchasesPage> {
                       p.status == DocStatus.cancelled ? c.danger : c.accent,
                     ),
                   ),
-                ],
+actionsColumn<Purchase>((p) => RowActionsMenu(
+                    onView: () => showPurchaseDetail(context, ref, p.id),
+                    onDelete: p.status == DocStatus.completed && app.ctx.can(Permission.cancelTransactions) ? () => deletePurchaseRecord(context, ref, p, names[p.supplierId] ?? '') : null,
+                  )),
+],
               ),
             ),
           ),
@@ -216,15 +221,20 @@ class _PLine {
   );
 }
 
-Future<void> showNewPurchase(BuildContext context, WidgetRef ref) =>
+/// New purchase. With [product], that existing product is already on the
+/// purchase (repeat purchase / restock), and its serial entry opens.
+Future<void> showNewPurchase(BuildContext context, WidgetRef ref, {Product? product}) => openNewPurchase(context, product: product);
+
+Future<void> openNewPurchase(BuildContext context, {Product? product}) =>
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const _NewPurchase(),
+      builder: (_) => _NewPurchase(product: product),
     );
 
 class _NewPurchase extends ConsumerStatefulWidget {
-  const _NewPurchase();
+  final Product? product;
+  const _NewPurchase({this.product});
   @override
   ConsumerState<_NewPurchase> createState() => _NewPurchaseState();
 }
@@ -240,6 +250,13 @@ class _NewPurchaseState extends ConsumerState<_NewPurchase> {
   bool _saving = false;
 
   Money get _total => Money.sum(_lines.map((l) => l.net));
+
+  @override
+  void initState() {
+    super.initState();
+    final p = widget.product;
+    if (p != null) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _add(p) : null);
+  }
 
   void _add(Product p) {
     if (_lines.any((l) => l.product.id == p.id)) {
@@ -912,8 +929,11 @@ Future<void> showPurchaseDetail(
         builder: (ctx, ref, _) {
           final c = AppTheme.of(ctx);
           final app = ref.watch(liveServicesProvider);
-          final p = app.purchases.byId(id)!;
-          final sup = app.parties.byId(PartyKind.supplier, p.supplierId)!;
+          final p0 = app.purchases.byId(id);
+          final sup0 = p0 == null ? null : app.parties.byId(PartyKind.supplier, p0.supplierId);
+          if (p0 == null || sup0 == null) return const RecordGone('purchase');
+          final p = p0;
+          final sup = sup0;
           final st = app.ctx.settings;
           return FormDialog(
             title: 'Purchase ${p.number}',

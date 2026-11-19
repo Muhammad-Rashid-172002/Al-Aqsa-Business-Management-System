@@ -7,10 +7,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/money.dart';
 import '../../domain/models/expense.dart';
 import '../../domain/models/party.dart';
+import '../../domain/models/user.dart';
 import '../../domain/services/report_service.dart';
 import '../../domain/services/report_tables.dart';
 import '../../export/tabular.dart';
 import '../print_actions.dart';
+import '../record_actions.dart';
 import '../providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -108,7 +110,15 @@ class _ExpensesPageState extends ConsumerState<ExpensesPage> {
               AppColumn('Method', flex: 1, minWidth: 90, (e) => Text(e.method.label)),
               AppColumn('Receipt', flex: 1, minWidth: 70, (e) => (e.receiptPath ?? '').isEmpty ? const Text('—') : Icon(Icons.attach_file, size: 16, color: c.accent)),
               AppColumn('Amount', numeric: true, flex: 2, minWidth: 110, (e) => Text(e.deleted ? 'DELETED' : e.amount.format(), style: TextStyle(fontWeight: FontWeight.w700, color: e.deleted ? c.textMuted : null))),
-            ],
+actionsColumn<Expense>((e) => RowActionsMenu(
+                  onView: () => _view(context, e),
+                  onEdit: e.deleted ? null : () => showExpenseDialog(context, ref, existing: e),
+                  onDelete: e.deleted && !app.ctx.can(Permission.permanentDelete) ? null : () => deleteExpenseRecord(context, ref, e),
+                  extra: [
+                    if (e.deleted) RowAction('Restore', Icons.restore, () => runAction(context, () => app.expenses.restore(e.id), success: 'Expense ${e.number} restored'), keyName: 'row-restore'),
+                  ],
+                )),
+],
           ),
         ),
       ]),
@@ -145,31 +155,9 @@ class _ExpensesPageState extends ConsumerState<ExpensesPage> {
             }, child: const Text('Restore'))
           else ...[
             TextButton(
-              onPressed: () async {
-                final reason = TextEditingController();
-                final ok = await showDialog<bool>(
-                  context: ctx,
-                  builder: (d) => AlertDialog(
-                    title: Text('Delete ${e.number}?'),
-                    content: SizedBox(
-                      width: 380,
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        Text('${e.title} • ${e.amount.format()}\nIt will no longer count in reports. It stays in the history and can be restored.'),
-                        const SizedBox(height: 10),
-                        TextField(controller: reason, decoration: const InputDecoration(labelText: 'Reason (optional)')),
-                      ]),
-                    ),
-                    actions: [
-                      TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')),
-                      FilledButton(style: FilledButton.styleFrom(backgroundColor: AppTheme.of(d).danger), onPressed: () => Navigator.pop(d, true), child: const Text('Delete')),
-                    ],
-                  ),
-                );
-                if (ok == true && ctx.mounted) {
-                  Navigator.pop(ctx);
-                  if (context.mounted) await runAction(context, () => app.expenses.delete(e.id, reason: reason.text), success: 'Expense deleted');
-                }
-                reason.dispose();
+              onPressed: () {
+                Navigator.pop(ctx);
+                deleteExpenseRecord(context, ref, e);
               },
               child: Text('Delete', style: TextStyle(color: c.danger)),
             ),

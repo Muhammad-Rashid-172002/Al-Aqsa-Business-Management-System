@@ -76,6 +76,51 @@ class PurchaseService {
 
   /// Confirms a purchase in one unit of work: purchase document, stock-in
   /// with FIFO layers, serial registration, supplier ledger and payment.
+  /// Adds new serial-numbered units to an EXISTING product when they did
+  /// not come from a supplier purchase (opening stock, stock found in a
+  /// count, a gift). Same rules as a purchase: one new cost batch at
+  /// [unitCost] dated [date], each serial unique (earlier purchases
+  /// included; only the owner may approve a genuine duplicate), stock rises
+  /// by the number of serials. Old serials are untouched. Returns the
+  /// stock-in number (SIN-…).
+  Future<String> addSerialStock({
+    required String productId,
+    required List<String> serials,
+    required Money unitCost,
+    required DateTime date,
+    required String reason,
+    Set<String> approvedSerialConflicts = const {},
+  }) async {
+    ctx.require(Permission.adjustStock);
+    if (reason.trim().isEmpty) throw const ValidationException('Please give a reason (e.g. opening stock).');
+    if (unitCost.isNegative) throw const ValidationException('Cost cannot be negative.');
+    final uow = ctx.uow();
+    final p = inv.product(uow, productId);
+    if (!p.requiresSerial) throw const BusinessException('This product does not track serial numbers.');
+    if (serials.isEmpty) throw const ValidationException('Enter at least one serial number.');
+    final list = this.serials.normalizeList(serials, expectedQty: serials.length, productName: p.name);
+    if (list.toSet().length != list.length) throw const DuplicateException('A serial number is entered twice.');
+    final ref = newId();
+    final number = ctx.nextNumber(uow, 'stock_in', 'SIN', pad: 5);
+    final qty = Qty.units(list.length);
+    inv.stockIn(uow, productId: p.id, qty: qty, unitCost: unitCost, type: 'serialStockIn', refType: 'stock_in', refId: ref, reason: '$number: $reason', date: date);
+    this.serials.registerPurchased(uow,
+        serials: list,
+        product: p,
+        supplierId: null,
+        purchaseId: ref,
+        purchaseNumber: number,
+        date: date,
+        unitCost: unitCost,
+        approved: approvedSerialConflicts.map(normalizeCode).toSet(),
+        outKeys: <String>[],
+        verb: 'Added to stock',
+        refType: 'stock_in');
+    ctx.audit(uow, 'serial_stock_in', 'product', p.id, '$number: +${list.length} ${p.unit} @ ${unitCost.format()} – $reason');
+    await uow.commit();
+    return number;
+  }
+
   Future<Purchase> create({
     required String supplierId,
     String supplierInvoiceNo = '',

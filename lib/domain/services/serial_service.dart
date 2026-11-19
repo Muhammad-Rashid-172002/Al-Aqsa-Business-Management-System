@@ -44,7 +44,8 @@ enum SerialIssue {
   /// Entered twice in this list.
   repeated,
 
-  /// Already registered for this brand (owner approval needed on save).
+  /// Already registered for this brand, including this product's earlier
+  /// purchases (blocked; only the owner can approve a genuine duplicate).
   alreadyRegistered,
 
   /// Exists under another brand (owner approval needed on save).
@@ -167,7 +168,8 @@ class SerialService {
     return out;
   }
 
-  /// Checks serials about to be bought for [product] against existing ones.
+  /// Checks serials about to be bought for [product] against existing ones,
+  /// including every earlier purchase of the same product.
   List<SerialConflict> conflicts(UnitOfWork? uow, Product product, Iterable<String> serials) {
     final out = <SerialConflict>[];
     for (final raw in serials) {
@@ -194,13 +196,15 @@ class SerialService {
     UnitOfWork uow, {
     required List<String> serials,
     required Product product,
-    required String supplierId,
-    required String purchaseId,
+    required String? supplierId, // null: stock that did not come from a supplier
+    required String purchaseId, // the batch (purchase or stock-in) the units belong to
     required String purchaseNumber,
     required DateTime date,
     required Money unitCost,
     Set<String> approved = const {},
     required List<String> outKeys,
+    String verb = 'Purchased',
+    String refType = 'purchase',
   }) {
     final found = conflicts(uow, product, serials);
     final unapproved = found.where((c) => !approved.contains(c.serial)).toList();
@@ -217,7 +221,7 @@ class SerialService {
       if (existingJ != null) {
         final ex = SerialRecord.fromJson(existingJ);
         if (ex.status == SerialStatus.returnedToSupplier && ex.productId == product.id) {
-          save(uow, ex.repurchased(supplierId: supplierId, purchaseId: purchaseId, date: date, cost: unitCost, note: 'Re-purchased $purchaseNumber', userId: ctx.userId));
+          save(uow, ex.repurchased(supplierId: supplierId ?? ex.supplierId ?? '', purchaseId: purchaseId, date: date, cost: unitCost, note: 'Re-purchased $purchaseNumber', userId: ctx.userId));
           outKeys.add(ex.key);
           continue;
         }
@@ -242,8 +246,8 @@ class SerialService {
         duplicateApprovedBy: isApprovedDup ? ctx.userId : null,
       ).transition(SerialStatus.inStock,
           at: ctx.now(),
-          note: 'Purchased $purchaseNumber${isApprovedDup ? ' (duplicate approved by owner)' : ''}',
-          refType: 'purchase',
+          note: '$verb $purchaseNumber${isApprovedDup ? ' (duplicate approved by owner)' : ''}',
+          refType: refType,
           refId: purchaseId,
           userId: ctx.userId);
       save(uow, rec);
@@ -287,7 +291,13 @@ class SerialService {
         if (r == null) continue;
         if (r.brandKey == brandKey) {
           if (r.status == SerialStatus.returnedToSupplier && r.productId == productId) continue;
-          found = SerialCheck(raw, sn, SerialIssue.alreadyRegistered, 'Already registered (${r.status.label})');
+          found = SerialCheck(
+              raw,
+              sn,
+              SerialIssue.alreadyRegistered,
+              productId != null && r.productId == productId
+                  ? 'Already recorded for this product${r.purchaseDate == null ? '' : ' (bought ${_d(r.purchaseDate!)})'} • ${r.status.label}'
+                  : 'Already registered (${r.status.label})');
           break;
         }
         found ??= SerialCheck(raw, sn, SerialIssue.otherBrand, 'Exists under brand ${r.brandKey}');
@@ -355,3 +365,5 @@ class SerialService {
     return out;
   }
 }
+
+String _d(DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';

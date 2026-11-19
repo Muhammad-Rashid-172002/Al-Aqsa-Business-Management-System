@@ -148,7 +148,7 @@ class SalesService {
           final sers = serials.normalizeList(it.serials, expectedQty: it.qty.wholeUnits, productName: p.name);
           recs = serials.requireAll(uow, sers, p.id, {SerialStatus.inStock}, 'sale');
         }
-        cogs = inv.stockOut(uow, productId: p.id, qty: it.qty, type: 'sale', refType: 'sale', refId: id, reason: number, allowNegative: allowNegativeStock);
+        cogs = inv.stockOut(uow, productId: p.id, qty: it.qty, type: 'sale', refType: 'sale', refId: id, reason: number, allowNegative: allowNegativeStock, units: recs);
       }
       for (final r in recs) {
         if (!seen.add(r.key)) throw DuplicateException('Serial "${r.display}" is on the invoice twice.');
@@ -220,8 +220,13 @@ class SalesService {
         }
         continue;
       }
-      inv.stockIn(uow,
-          productId: it.productId, qty: it.qty, unitCost: it.cogs.perUnit(it.qty), totalCost: it.cogs, type: 'saleCancel', refType: 'sale_cancel', refId: sale.id, reason: reason);
+      if (it.serials.isNotEmpty) {
+        inv.stockInUnits(uow,
+            productId: it.productId, units: [for (final k in it.serials) serials.resolve(uow, k, it.productId)], fallbackTotal: it.cogs, type: 'saleCancel', refType: 'sale_cancel', refId: sale.id, reason: reason);
+      } else {
+        inv.stockIn(uow,
+            productId: it.productId, qty: it.qty, unitCost: it.cogs.perUnit(it.qty), totalCost: it.cogs, type: 'saleCancel', refType: 'sale_cancel', refId: sale.id, reason: reason);
+      }
       for (final k in it.serials) {
         final r = serials.resolve(uow, k, it.productId);
         serials.save(uow,
@@ -292,7 +297,8 @@ class SalesService {
           if (r.saleId != sale.id) throw ValidationException('Serial "${r.display}" was not sold on ${sale.number}.');
         }
       }
-      final cost = it.cogs.shareQty(l.qty, it.qty);
+      // A serial unit's cost is its own batch cost; others share the line cost.
+      final cost = InventoryEngine.unitsCost(recs) ?? it.cogs.shareQty(l.qty, it.qty);
       final refund = sale.lineRevenue(idx).shareQty(l.qty, it.qty);
       switch (l.condition) {
         case 'damaged':
@@ -304,7 +310,11 @@ class SalesService {
         case 'inspect':
           inspections.enqueue(uow, product: p, qty: l.qty, cost: cost, serialRecords: recs, sourceType: 'sales_return', sourceId: id, condition: 'customer return', reason: reason);
         default:
-          inv.stockIn(uow, productId: p.id, qty: l.qty, unitCost: cost.perUnit(l.qty), totalCost: cost, type: 'salesReturn', refType: 'sales_return', refId: id, reason: reason);
+          if (recs.isNotEmpty) {
+            inv.stockInUnits(uow, productId: p.id, units: recs, fallbackTotal: cost, type: 'salesReturn', refType: 'sales_return', refId: id, reason: reason);
+          } else {
+            inv.stockIn(uow, productId: p.id, qty: l.qty, unitCost: cost.perUnit(l.qty), totalCost: cost, type: 'salesReturn', refType: 'sales_return', refId: id, reason: reason);
+          }
           for (final r in recs) {
             serials.save(uow,
                 r.transition(SerialStatus.inStock, at: when, note: 'Customer return $number', refType: 'sales_return', refId: id, userId: ctx.userId, clearCustomer: true, clearSale: true, clearWarranty: true));

@@ -97,6 +97,153 @@ class BackupManifest {
 }
 
 /// One image / document stored in a backup.
+/// A complete deletion plan for one permanently deleted record and
+/// everything that belonged only to it. Used on the live database and,
+/// when the owner explicitly purges, on every backup file, so both end up
+/// the same. Holds internal ids only (no names), so it can be kept as a
+/// restore block ("tombstone") without retaining deleted business data.
+class PurgeSpec {
+  final String kind;
+  final Map<String, List<String>> keys; // box -> keys of records to erase
+  /// Kept records lose their links to erased ones: an erased id is replaced
+  /// by the mapped value (null = link removed; for purchases a new opaque
+  /// batch id, so serial units keep their own batch cost).
+  final Map<String, String?> relink;
+  final List<String> ids; // audit entries about these ids lose their details
+  final List<String> files; // file paths used only by erased records
+  final List<String> anonymizeUsers; // login accounts kept (they have activity) but stripped of the person
+  const PurgeSpec({required this.kind, required this.keys, this.relink = const {}, required this.ids, this.files = const [], this.anonymizeUsers = const []});
+
+  Map<String, dynamic> toJson() => {'kind': kind, 'keys': keys, 'relink': relink, 'ids': ids, 'anonymizeUsers': anonymizeUsers};
+  factory PurgeSpec.fromJson(Map<String, dynamic> j) => PurgeSpec(
+        kind: '${j['kind']}',
+        keys: (j['keys'] as Map? ?? {}).map((k, v) => MapEntry('$k', [for (final x in v as List) '$x'])),
+        relink: (j['relink'] as Map? ?? {}).map((k, v) => MapEntry('$k', v?.toString())),
+        ids: [for (final x in j['ids'] as List? ?? const []) '$x'],
+        anonymizeUsers: [for (final x in j['anonymizeUsers'] as List? ?? const []) '$x'],
+      );
+
+  int get recordCount => keys.values.fold(0, (a, b) => a + b.length);
+
+  static const linkedNote = '[linked record permanently deleted]';
+  static const deletedInvoiceMarker = 'deleted-invoice';
+  static const _textFields = {'note', 'notes', 'reason', 'jobRef'};
+
+  /// [v] with every erased id replaced. Returns [v] itself when unchanged.
+  Object? relinkValue(Object? v, [String? field]) {
+    if (v is String) {
+      if (!relink.containsKey(v)) return v;
+      if (field == 'invoicedSaleId') return deletedInvoiceMarker; // stays "invoiced": never re-billed
+      return relink[v];
+    }
+    if (v is List) {
+      var changed = false;
+      final out = <Object?>[];
+      for (final e in v) {
+        final r = relinkValue(e);
+        if (!identical(r, e)) changed = true;
+        if (r == null && e is String) continue; // drop the link from the list
+        out.add(r);
+      }
+      return changed ? out : v;
+    }
+    if (v is Map) {
+      var changed = false;
+      var direct = false; // one of this record's own fields pointed at an erased record
+      final out = <String, dynamic>{};
+      for (final e in v.entries) {
+        final r = relinkValue(e.value, '${e.key}');
+        if (!identical(r, e.value)) {
+          changed = true;
+          if (e.value is String) direct = true;
+        }
+        out['${e.key}'] = r;
+      }
+      if (!changed) return v;
+      // Text that described the erased record (invoice number, name) goes too.
+      if (direct) {
+        for (final f in _textFields) {
+          if (out[f] is String && (out[f] as String).isNotEmpty) out[f] = linkedNote;
+        }
+      }
+      return out;
+    }
+    return v;
+  }
+
+  Json anonymizedUser(Json u) => {...u, 'username': 'deleted_${'${u['id']}'.substring(0, 8)}', 'displayName': 'Deleted user', 'employeeId': null, 'active': false};
+
+  /// Applies the plan to a decoded backup / restore data set. Returns how
+  /// many records were erased.
+  int applyTo(Map<String, Map<String, Json>> data) {
+    var n = 0;
+    for (final e in keys.entries) {
+      for (final k in e.value) {
+        if (data[e.key]?.remove(k) != null) n++;
+      }
+    }
+    final idSet = ids.toSet();
+    for (final b in data.entries) {
+      if (b.key == Boxes.auditLogs) {
+        for (final a in b.value.values) {
+          if (idSet.contains(a['entityId']) && a['action'] != 'permanent_delete' && a['action'] != 'backup_purge') a['details'] = '[permanently deleted]';
+        }
+        continue;
+      }
+      for (final r in b.value.entries.toList()) {
+        var v = relinkValue(r.value) as Json;
+        if (b.key == Boxes.users && anonymizeUsers.contains(r.key)) v = anonymizedUser(v);
+        if (!identical(v, r.value)) b.value[r.key] = v;
+      }
+    }
+    return n;
+  }
+
+  bool presentIn(Map<String, Map<String, Json>> data) {
+    for (final e in keys.entries) {
+      if (e.value.any((k) => data[e.key]?.containsKey(k) ?? false)) return true;
+    }
+    return false;
+  }
+}
+
+/// A backup file found to contain a record.
+class BackupHit {
+  final String path;
+  final DateTime createdAt;
+  final String label;
+  const BackupHit(this.path, this.createdAt, this.label);
+}
+
+/// Where a record was looked for in backups, and what was found.
+class BackupScan {
+  final List<String> folders; // every folder that was checked
+  final List<BackupHit> containing;
+  final int checkedClean; // readable backups that do not contain it
+  final List<String> unreadable; // could not be checked (damaged, locked)
+  const BackupScan(this.folders, this.containing, this.checkedClean, this.unreadable);
+}
+
+class PurgeFileResult {
+  final String path;
+  final bool rewritten;
+  final String? error;
+  const PurgeFileResult(this.path, {required this.rewritten, this.error});
+}
+
+class PurgeReport {
+  final List<String> folders;
+  final List<PurgeFileResult> files;
+  final int checkedClean;
+  final List<String> unreadable;
+  const PurgeReport(this.folders, this.files, this.checkedClean, this.unreadable);
+  int get rewritten => files.where((f) => f.rewritten).length;
+  List<PurgeFileResult> get failed => files.where((f) => f.error != null).toList();
+  /// True only when every backup in every known folder was checked and none
+  /// still contains the record.
+  bool get complete => failed.isEmpty && unreadable.isEmpty;
+}
+
 class BackupFileEntry {
   final String zipPath; // files/media/products/x.jpg or files/external/3_logo.png
   final String original; // path on the computer the backup was made on
@@ -492,6 +639,95 @@ class BackupService {
     return out;
   }
 
+  // ── Purging a permanently deleted record from backups ─────────────────
+
+  /// Every folder this app writes backups to (backup folder + local copy,
+  /// which also holds the safety copies made before a restore).
+  List<String> backupFolders() => {if (backupDirectory != null) backupDirectory!, localBackupDir}.toList();
+
+  Future<List<File>> _backupFiles(String dir) async {
+    final d = Directory(dir);
+    if (!await d.exists()) return [];
+    return [await for (final e in d.list()) if (e is File && isBackupFileName(e.path)) e];
+  }
+
+  /// Opens every backup in [backupFolders] and lists those holding [spec].
+  Future<BackupScan> findRecord(PurgeSpec spec) async {
+    final folders = backupFolders();
+    final hits = <BackupHit>[];
+    final bad = <String>[];
+    var clean = 0;
+    for (final dir in folders) {
+      for (final f in await _backupFiles(dir)) {
+        final path = f.path;
+        try {
+          final (m, found) = await Isolate.run(() {
+            final (m, data, _) = _checkBackup(path);
+            return (m, spec.presentIn(data));
+          });
+          if (found) {
+            hits.add(BackupHit(path, m.createdAt, m.label));
+          } else {
+            clean++;
+          }
+        } catch (e) {
+          bad.add('$path — ${e is BusinessException ? e.message : e}'); // with the reason
+        }
+      }
+    }
+    return BackupScan(folders, hits, clean, bad);
+  }
+
+  /// Removes [spec] from every backup that holds it. This DESTROYS the
+  /// recovery copies of that record. Each affected file is rewritten to a
+  /// temporary file, fully re-checked, verified not to contain the record,
+  /// and only then put in place of the original (a failure leaves the
+  /// original untouched and is reported). First a restore block is saved:
+  /// restoring any backup — also copies kept elsewhere (USB, cloud) that
+  /// this app cannot see — skips these records.
+  Future<PurgeReport> purgeRecord(PurgeSpec spec, {required String confirmation}) async {
+    ctx.require(Permission.backupRestore);
+    ctx.require(Permission.permanentDelete);
+    if (confirmation != 'PURGE') throw const ValidationException('Type PURGE to confirm.');
+    await _addTombstone(spec);
+    final scan = await findRecord(spec);
+    final results = <PurgeFileResult>[];
+    for (final h in scan.containing) {
+      final path = h.path;
+      try {
+        await Isolate.run(() => _purgeFile(path, spec));
+        results.add(PurgeFileResult(path, rewritten: true));
+      } catch (e) {
+        results.add(PurgeFileResult(path, rewritten: false, error: e is BusinessException ? e.message : '$e'));
+      }
+    }
+    // Check again from scratch: success is what the files say now.
+    final after = await findRecord(spec);
+    final still = {for (final h in after.containing) h.path};
+    final finalResults = [
+      for (final r in results)
+        if (still.contains(r.path) && r.error == null) PurgeFileResult(r.path, rewritten: false, error: 'Still contains the record after rewriting.') else r,
+    ];
+    final uow = ctx.uow();
+    ctx.audit(uow, 'backup_purge', spec.kind, spec.ids.first,
+        '${finalResults.where((r) => r.rewritten).length} backup file(s) rewritten, ${after.checkedClean} checked without it, ${after.unreadable.length} unreadable, ${finalResults.where((r) => r.error != null).length} failed');
+    await uow.commit();
+    return PurgeReport(after.folders, finalResults, after.checkedClean, after.unreadable);
+  }
+
+  static const _tombstoneKey = 'purgedRecords';
+
+  List<PurgeSpec> tombstones() {
+    final v = ctx.store.read(Boxes.meta, _tombstoneKey)?['value'];
+    if (v is! List) return const [];
+    return [for (final e in v) PurgeSpec.fromJson(Map<String, dynamic>.from(e as Map))];
+  }
+
+  Future<void> _addTombstone(PurgeSpec spec) async {
+    final list = [for (final t in tombstones()) t.toJson(), spec.toJson()];
+    await ctx.store.commit([WriteOp(Boxes.meta, _tombstoneKey, {'value': list})]);
+  }
+
   // ── Restoring ───────────────────────────────────────────────────────
 
   /// Reads and fully checks a backup file (zip structure, checksums, record
@@ -518,7 +754,7 @@ class BackupService {
     ctx.require(Permission.backupRestore);
     final (manifest, data, files) = await _validateInBackground(path);
     final keepStatus = {
-      for (final k in const ['lastBackup', 'lastAutoBackup', 'lastBackupFile', 'lastBackupError', 'lastBackupErrorAt', 'lastBackupAttempt', 'lastExternalBackupError'])
+      for (final k in const ['lastBackup', 'lastAutoBackup', 'lastBackupFile', 'lastBackupError', 'lastBackupErrorAt', 'lastBackupAttempt', 'lastExternalBackupError', _tombstoneKey])
         if (ctx.store.read(Boxes.meta, k) != null) k: ctx.store.read(Boxes.meta, k)!,
     };
     final safety = await backupTo(localBackupDir, label: 'before_restore');
@@ -538,6 +774,10 @@ class BackupService {
         if (f.original.isNotEmpty) pathMap[f.original] = finalPath;
       }
       final migrated = Migrator.migrateData(data, manifest.schemaVersion);
+      // Records purged from backups never come back, whichever copy is used.
+      for (final t in tombstones()) {
+        t.applyTo(migrated);
+      }
       _remapPaths(migrated, pathMap);
       await Migrator.replaceAll(ctx.store, migrated);
       // Data is restored; now the images.
@@ -727,4 +967,62 @@ Map<String, String> _extractFiles(String path, List<BackupFileEntry> files, Stri
     out[e.zipPath] = dest.path;
   }
   return out;
+}
+
+/// Rewrites one backup without [spec] (see [BackupService.purgeRecord]).
+/// The original is replaced only after the new file passed the full check.
+void _purgeFile(String path, PurgeSpec spec) {
+  final archive = _open(path);
+  final m = _manifestOf(archive);
+  final (_, data, files) = _checkBackup(path);
+  if (!spec.presentIn(data)) return;
+  spec.applyTo(data);
+  // Drop files only the purged record used (no remaining record mentions them).
+  final dataText = jsonEncode(data);
+  final keep = [
+    for (final f in files)
+      if (!(spec.files.contains(f.original) && !dataText.contains(jsonEncode(f.original)))) f,
+  ];
+  final dataBytes = Uint8List.fromList(utf8.encode(dataText));
+  final out = Archive();
+  var total = 0;
+  for (final f in keep) {
+    final b = archive.findFile(f.zipPath)!.content;
+    out.addFile(ArchiveFile(f.zipPath, b.length, b));
+    total += b.length;
+  }
+  final filesJson = utf8.encode(jsonEncode([for (final e in keep) e.toJson()]));
+  final manifest = BackupManifest(
+    app: m.app,
+    format: m.format < 2 ? 2 : m.format,
+    schemaVersion: m.schemaVersion,
+    appVersion: m.appVersion,
+    createdAt: m.createdAt,
+    sha256: sha256.convert(dataBytes).toString(),
+    counts: {for (final e in data.entries) e.key: e.value.length},
+    label: m.label,
+    fileCount: keep.length,
+    fileBytes: total,
+    filesSha256: sha256.convert(filesJson).toString(),
+    missingFiles: m.missingFiles,
+  );
+  final mBytes = utf8.encode(jsonEncode(manifest.toJson()));
+  out
+    ..addFile(ArchiveFile('manifest.json', mBytes.length, mBytes))
+    ..addFile(ArchiveFile('data.json', dataBytes.length, dataBytes))
+    ..addFile(ArchiveFile('files.json', filesJson.length, filesJson));
+  final tmp = File('$path.purge.tmp');
+  final old = File('$path.purge.old');
+  try {
+    tmp.writeAsBytesSync(ZipEncoder().encode(out), flush: true);
+    final (_, check, _) = _checkBackup(tmp.path); // full integrity check of the new file
+    if (spec.presentIn(check)) throw const BusinessException('The rewritten backup still contains the record.');
+    File(path).renameSync(old.path);
+    tmp.renameSync(path);
+    old.deleteSync();
+  } catch (e) {
+    if (tmp.existsSync()) tmp.deleteSync();
+    if (old.existsSync() && !File(path).existsSync()) old.renameSync(path); // put the original back
+    rethrow;
+  }
 }

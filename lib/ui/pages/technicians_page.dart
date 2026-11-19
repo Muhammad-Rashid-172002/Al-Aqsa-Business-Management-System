@@ -10,6 +10,7 @@ import '../../domain/models/user.dart';
 import '../../domain/services/technician_service.dart';
 import '../../export/tabular.dart';
 import '../print_actions.dart';
+import '../record_actions.dart';
 import '../providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -107,10 +108,7 @@ class _TechListState extends ConsumerState<_TechList> {
                           itemBuilder: (_, k) {
                             final t = techs[k];
                             final s0 = app.technicians.summary(t.id);
-                            return AppCard(
-                              hoverLift: true,
-                              onTap:
-                                  () => showDialog<void>(
+                            void openDetail() => showDialog<void>(
                                     context: context,
                                     builder:
                                         (ctx) => Dialog(
@@ -137,7 +135,10 @@ class _TechListState extends ConsumerState<_TechList> {
                                             ),
                                           ),
                                         ),
-                                  ),
+                                  );
+                            return AppCard(
+                              hoverLift: true,
+                              onTap: openDetail,
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -181,6 +182,15 @@ class _TechListState extends ConsumerState<_TechList> {
                                       ),
                                       if (!t.active)
                                         StatusPill('Inactive', c.textMuted),
+                                      RowActionsMenu(
+                                        onView: openDetail,
+                                        onEdit: app.ctx.can(Permission.manageTechnicians) ? () => showTechForm(context, ref, existing: t) : null,
+                                        onDelete: app.ctx.can(Permission.manageTechnicians) && (t.active || app.ctx.can(Permission.permanentDelete)) ? () => deleteTechnicianRecord(context, ref, t) : null,
+                                        extra: [
+                                          if (app.ctx.can(Permission.manageTechnicians) && !t.active)
+                                            RowAction('Restore', Icons.unarchive_outlined, () => runAction(context, () => app.technicians.update(t.copyWith(active: true)), success: '"${t.name}" restored'), keyName: 'row-restore'),
+                                        ],
+                                      ),
                                     ],
                                   ),
                                   const Spacer(),

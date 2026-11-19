@@ -32,6 +32,7 @@ enum Permission {
   submitOwnUsage,
   viewAssignedRepairs,
   manageExpenses,
+  permanentDelete, // owner only: erase a record for good
 }
 
 const rolePermissions = <UserRole, Set<Permission>>{

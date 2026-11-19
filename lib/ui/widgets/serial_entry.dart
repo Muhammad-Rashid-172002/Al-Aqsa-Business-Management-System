@@ -94,28 +94,10 @@ class _SerialEntryState extends State<_SerialEntry> {
   }
 
   Future<void> _paste() async {
-    final ctl = TextEditingController();
     final clip = await Clipboard.getData(Clipboard.kTextPlain);
-    ctl.text = clip?.text ?? '';
     if (!mounted) return;
-    final text = await showDialog<String>(
-      context: context,
-      builder: (ctx) => FormDialog(
-        title: 'Paste serial numbers',
-        width: 520,
-        body: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const Text('One serial per line (commas, semicolons and tabs also separate).'),
-          const SizedBox(height: 10),
-          TextField(key: const ValueKey('serial-paste'), controller: ctl, autofocus: true, maxLines: 12, style: const TextStyle(fontFamily: 'Consolas')),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, ctl.text), child: const Text('Add to list')),
-        ],
-      ),
-    );
-    ctl.dispose();
-    if (text != null) _addAll(SerialService.splitEntries(text));
+    final text = await showDialog<String>(context: context, builder: (_) => _PasteSerialsDialog(initial: clip?.text ?? ''));
+    if (text != null && mounted) _addAll(SerialService.splitEntries(text));
   }
 
   Future<void> _import() async {
@@ -277,4 +259,39 @@ class _SerialEntryState extends State<_SerialEntry> {
       ],
     );
   }
+}
+
+/// Paste box for serial numbers. It owns its text controller and releases it
+/// in [State.dispose], i.e. only after the dialog has fully closed (disposing
+/// it right after `showDialog` returned crashed the closing animation).
+class _PasteSerialsDialog extends StatefulWidget {
+  final String initial;
+  const _PasteSerialsDialog({required this.initial});
+  @override
+  State<_PasteSerialsDialog> createState() => _PasteSerialsDialogState();
+}
+
+class _PasteSerialsDialogState extends State<_PasteSerialsDialog> {
+  late final _ctl = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FormDialog(
+        title: 'Paste serial numbers',
+        width: 520,
+        body: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text('One serial per line (commas, semicolons and tabs also separate).'),
+          const SizedBox(height: 10),
+          TextField(key: const ValueKey('serial-paste'), controller: _ctl, autofocus: true, maxLines: 12, style: const TextStyle(fontFamily: 'Consolas')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, _ctl.text), child: const Text('Add to list')),
+        ],
+      );
 }

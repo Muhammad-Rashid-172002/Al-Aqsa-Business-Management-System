@@ -16,11 +16,29 @@ final dataVersionProvider = StreamProvider<int>((ref) {
   return store.changes.where((boxes) => boxes.any((b) => b != Boxes.errorLog)).map((_) => ++n);
 });
 
-/// Watches data changes and returns the services (convenience for pages).
-final liveServicesProvider = Provider<AppServices>((ref) {
-  ref.watch(dataVersionProvider);
-  return ref.watch(servicesProvider);
-});
+/// The services, re-published after every data change. Every page and
+/// detail dialog watches this, so whatever a commit changes (new record,
+/// edit, archive, restore, sale, purchase, payment, stock, balances,
+/// expenses, settings) appears on screen at once, wherever it is shown.
+///
+/// It is a [Notifier] on purpose: the value is always the same
+/// [AppServices] object, and a plain `Provider` only notifies listeners
+/// when its value is a different object, so it never told the screens that
+/// the data had changed (they refreshed only when something else rebuilt
+/// them, such as switching pages). [_LiveServices.updateShouldNotify]
+/// returns true, so each data change reaches every watching widget.
+final liveServicesProvider = NotifierProvider<_LiveServices, AppServices>(_LiveServices.new);
+
+class _LiveServices extends Notifier<AppServices> {
+  @override
+  AppServices build() {
+    ref.watch(dataVersionProvider);
+    return ref.watch(servicesProvider);
+  }
+
+  @override
+  bool updateShouldNotify(AppServices previous, AppServices next) => true;
+}
 
 final currentUserProvider = StateProvider<AppUser?>((ref) => null);
 

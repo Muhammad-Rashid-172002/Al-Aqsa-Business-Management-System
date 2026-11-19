@@ -111,10 +111,47 @@ class InventoryEngine {
     _movement(uow, p, StockBucket.available, qty, p.stockQty, type, refType, refId, reason, totalCost ?? unitCost.timesQty(qty));
   }
 
+  /// Puts serial-tracked units back into available stock at each unit's own
+  /// batch cost (one cost layer per distinct cost), so a unit from a cheaper
+  /// or dearer batch keeps its cost when it is sold again. Units without a
+  /// recorded cost fall back to [fallbackTotal] spread evenly.
+  void stockInUnits(
+    UnitOfWork uow, {
+    required String productId,
+    required List<SerialRecord> units,
+    required Money fallbackTotal,
+    required String type,
+    required String refType,
+    required String refId,
+    String reason = '',
+  }) {
+    final qty = Qty.units(units.length);
+    if (units.isEmpty) return;
+    if (unitsCost(units) == null) {
+      stockIn(uow, productId: productId, qty: qty, unitCost: fallbackTotal.perUnit(qty), totalCost: fallbackTotal, type: type, refType: refType, refId: refId, reason: reason);
+      return;
+    }
+    final byCost = <int, int>{};
+    for (final u in units) {
+      byCost[u.cost.paisa] = (byCost[u.cost.paisa] ?? 0) + 1;
+    }
+    for (final e in byCost.entries) {
+      final q = Qty.units(e.value);
+      stockIn(uow, productId: productId, qty: q, unitCost: Money(e.key), totalCost: Money(e.key).timesQty(q), type: type, refType: refType, refId: refId, reason: reason);
+    }
+  }
+
+  /// Sum of the units' recorded batch costs, or null if any unit has none.
+  static Money? unitsCost(List<SerialRecord> units) {
+    if (units.isEmpty || units.any((u) => u.cost.isZero)) return null;
+    return Money.sum(units.map((u) => u.cost));
+  }
+
   /// Consumes FIFO layers and returns the total cost. When layers run short
   /// (only possible with owner-authorised negative stock) the shortfall is
   /// valued at the product's last purchase price.
-  Money consumeFifo(UnitOfWork uow, String productId, Qty qty, {String? preferSourceId}) {
+  Money consumeFifo(UnitOfWork uow, String productId, Qty qty, {String? preferSourceId, List<SerialRecord>? units}) {
+    if (units != null && units.isNotEmpty) return _consumeUnits(uow, productId, qty, units);
     var need = qty;
     var cost = const Money.zero();
     final layers = openLayers(uow, productId);
@@ -132,7 +169,33 @@ class InventoryEngine {
     return cost;
   }
 
-  /// Removes [qty] from available stock. Returns FIFO cost of removed units.
+  /// Serial-tracked units leave stock at the cost of the batch each unit
+  /// actually came from (specific identification), not the oldest batch:
+  /// the layer of the unit's own purchase; failing that (e.g. a unit that
+  /// came back on a customer return) an open layer with the unit's recorded
+  /// cost; failing that, FIFO. Keeps every batch's remaining quantity equal
+  /// to its unsold serials, so profit and stock value stay per-batch exact.
+  Money _consumeUnits(UnitOfWork uow, String productId, Qty qty, List<SerialRecord> units) {
+    var cost = const Money.zero();
+    for (final u in units) {
+      final layers = openLayers(uow, productId);
+      if (layers.isEmpty) {
+        cost += (u.cost.isZero ? product(uow, productId).purchasePrice : u.cost);
+        continue;
+      }
+      final l = layers.where((l) => u.purchaseId != null && l.sourceId == u.purchaseId).firstOrNull ??
+          layers.where((l) => l.unitCost == u.cost).firstOrNull ??
+          layers.first;
+      cost += l.unitCost;
+      uow.put(Boxes.costLayers, l.id, l.withRemaining(l.qtyRemaining - const Qty.one()).toJson());
+    }
+    final rest = qty - Qty.units(units.length);
+    if (rest.isPositive) cost += consumeFifo(uow, productId, rest);
+    return cost;
+  }
+
+  /// Removes [qty] from available stock. Returns FIFO cost of removed units
+  /// (for serial-tracked items pass [units]: each unit's own batch cost).
   Money stockOut(
     UnitOfWork uow, {
     required String productId,
@@ -143,13 +206,14 @@ class InventoryEngine {
     String reason = '',
     bool allowNegative = false,
     String? preferSourceId,
+    List<SerialRecord>? units,
   }) {
     final p = product(uow, productId);
     checkQty(p, qty);
     if (p.stockQty < qty && !allowNegative) {
       throw StockException('Not enough stock for "${p.name}". Available: ${p.stockQty.format()} ${p.unit}, required: ${qty.format()}.');
     }
-    final cost = consumeFifo(uow, productId, qty, preferSourceId: preferSourceId);
+    final cost = consumeFifo(uow, productId, qty, preferSourceId: preferSourceId, units: units);
     saveProduct(uow, p.copyWith(stockQty: p.stockQty - qty));
     _movement(uow, p, StockBucket.available, -qty, p.stockQty, type, refType, refId, reason, cost);
     return cost;
@@ -199,7 +263,11 @@ class InventoryEngine {
       throw ValidationException('Select ${qty.format()} serial number(s) to mark damaged.');
     }
     final ref = newId();
-    final cost = stockOut(uow, productId: productId, qty: qty, type: 'damage', refType: 'damage', refId: ref, reason: reason);
+    final units = [
+      for (final k in serialKeys)
+        if (uow.read(Boxes.serials, k) case final j?) SerialRecord.fromJson(j)
+    ];
+    final cost = stockOut(uow, productId: productId, qty: qty, type: 'damage', refType: 'damage', refId: ref, reason: reason, units: units);
     changeBucket(uow, productId, StockBucket.damaged, qty, 'damage', 'damage', ref, reason, cost);
     for (final k in serialKeys) {
       final j = uow.read(Boxes.serials, k);

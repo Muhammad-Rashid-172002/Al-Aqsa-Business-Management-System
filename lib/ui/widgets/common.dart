@@ -925,3 +925,170 @@ class SearchBox extends StatelessWidget {
     ),
   );
 }
+
+// ───────── Row actions (⋮ menu) ─────────
+
+/// An extra entry for [RowActionsMenu].
+class RowAction {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool danger;
+  final String? keyName;
+  const RowAction(this.label, this.icon, this.onTap, {this.danger = false, this.keyName});
+}
+
+/// The vertical three-dot menu at the end of a table row. Only the actions
+/// passed in are shown; Delete is always last and coloured as dangerous.
+class RowActionsMenu extends StatelessWidget {
+  final VoidCallback? onView;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+  final List<RowAction> extra;
+  final String deleteLabel;
+  final String tooltip;
+  const RowActionsMenu({super.key, this.onView, this.onEdit, this.onDelete, this.extra = const [], this.deleteLabel = 'Delete', this.tooltip = 'Actions'});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppTheme.of(context);
+    final items = <RowAction>[
+      if (onView != null) RowAction('View', Icons.visibility_outlined, onView!, keyName: 'row-view'),
+      if (onEdit != null) RowAction('Edit', Icons.edit_outlined, onEdit!, keyName: 'row-edit'),
+      ...extra,
+      if (onDelete != null) RowAction(deleteLabel, Icons.delete_outline, onDelete!, danger: true, keyName: 'row-delete'),
+    ];
+    if (items.isEmpty) return const SizedBox(width: 40);
+    return PopupMenuButton<int>(
+      key: const ValueKey('row-menu'),
+      tooltip: tooltip,
+      icon: Icon(Icons.more_vert, color: c.textMuted),
+      padding: EdgeInsets.zero,
+      splashRadius: 18,
+      position: PopupMenuPosition.under,
+      constraints: const BoxConstraints(minWidth: 150, maxWidth: 260),
+      // Runs after the menu has closed, so dialogs open on a clean route.
+      onSelected: (i) => items[i].onTap(),
+      itemBuilder: (_) => [
+        for (var i = 0; i < items.length; i++) ...[
+          if (items[i].danger && i > 0) const PopupMenuDivider(height: 8),
+          PopupMenuItem<int>(
+            key: items[i].keyName == null ? null : ValueKey(items[i].keyName),
+            value: i,
+            height: 40,
+            child: Row(children: [
+              Icon(items[i].icon, size: 18, color: items[i].danger ? c.danger : c.textMuted),
+              const SizedBox(width: 12),
+              Flexible(child: Text(items[i].label, overflow: TextOverflow.ellipsis, style: TextStyle(color: items[i].danger ? c.danger : c.text))),
+            ]),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Trailing table column holding a [RowActionsMenu].
+AppColumn<T> actionsColumn<T>(Widget Function(T row) menu) =>
+    AppColumn<T>('', flex: 1, minWidth: 56, numeric: true, (r) => Align(alignment: Alignment.centerRight, child: menu(r)));
+
+/// Delete confirmation: shows the record's name and asks
+/// "Are you sure you want to delete this record?". [note] explains what will
+/// happen (for example that a record with history is archived).
+/// Returns null when cancelled, otherwise the reason typed ('' when no reason
+/// field is shown). With [reasonRequired] Delete stays disabled until a
+/// reason is entered.
+Future<String?> confirmDelete(
+  BuildContext context, {
+  required String name,
+  String? note,
+  bool askReason = false,
+  bool reasonRequired = false,
+  String confirmLabel = 'Delete',
+}) =>
+    showDialog<String>(
+      context: context,
+      builder: (_) => _DeleteDialog(name: name, note: note, askReason: askReason || reasonRequired, reasonRequired: reasonRequired, confirmLabel: confirmLabel),
+    );
+
+class _DeleteDialog extends StatefulWidget {
+  final String name;
+  final String? note;
+  final bool askReason;
+  final bool reasonRequired;
+  final String confirmLabel;
+  const _DeleteDialog({required this.name, this.note, required this.askReason, required this.reasonRequired, required this.confirmLabel});
+  @override
+  State<_DeleteDialog> createState() => _DeleteDialogState();
+}
+
+class _DeleteDialogState extends State<_DeleteDialog> {
+  final _ctl = TextEditingController();
+
+  @override
+  void dispose() {
+    _ctl.dispose(); // after the dialog has fully closed
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppTheme.of(context);
+    final canDelete = !widget.reasonRequired || _ctl.text.trim().isNotEmpty;
+    return AlertDialog(
+      key: const ValueKey('delete-dialog'),
+      scrollable: true,
+      icon: Icon(Icons.delete_outline, color: c.danger, size: 30),
+      title: const Text('Delete record'),
+      content: SizedBox(
+        width: 420,
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(color: c.danger.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(10), border: Border.all(color: c.danger.withValues(alpha: 0.25))),
+            child: Text(widget.name, key: const ValueKey('delete-name'), style: TextStyle(fontWeight: FontWeight.w700, color: c.text)),
+          ),
+          const SizedBox(height: 14),
+          Text('Are you sure you want to delete this record?', style: TextStyle(color: c.text)),
+          if (widget.note != null) ...[
+            const SizedBox(height: 8),
+            Text(widget.note!, style: TextStyle(color: c.textMuted, fontSize: 13)),
+          ],
+          if (widget.askReason) ...[
+            const SizedBox(height: 14),
+            TextField(
+              key: const ValueKey('delete-reason'),
+              controller: _ctl,
+              autofocus: true,
+              decoration: InputDecoration(labelText: widget.reasonRequired ? 'Reason (required, kept in the audit log)' : 'Reason (optional)'),
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
+        ]),
+      ),
+      actions: [
+        TextButton(key: const ValueKey('delete-cancel'), onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          key: const ValueKey('delete-confirm'),
+          style: FilledButton.styleFrom(backgroundColor: c.danger),
+          onPressed: canDelete ? () => Navigator.pop(context, _ctl.text.trim()) : null,
+          child: Text(widget.confirmLabel),
+        ),
+      ],
+    );
+  }
+}
+
+/// Shown by a live detail dialog when its record no longer exists (for
+/// example after it was deleted elsewhere or a backup was restored), instead
+/// of crashing on the next refresh.
+class RecordGone extends StatelessWidget {
+  final String what;
+  const RecordGone(this.what, {super.key});
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Record not available'),
+        content: Text('This $what no longer exists. It may have been deleted, or a backup was restored.'),
+        actions: [FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
+      );
+}

@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/qty.dart';
 import '../../domain/models/product.dart';
+import '../record_actions.dart';
 import '../providers.dart';
-import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/forms.dart';
 
@@ -13,7 +13,6 @@ class CategoriesPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final c = AppTheme.of(context);
     final app = ref.watch(liveServicesProvider);
     final cats = app.catalog.categories();
     final products = app.catalog.products();
@@ -47,14 +46,9 @@ class CategoriesPage extends ConsumerWidget {
                 AppColumn('Category', flex: 4, (x) => Text(x.name, style: const TextStyle(fontWeight: FontWeight.w600))),
                 AppColumn('Products', numeric: true, (x) => Text('${products.where((p) => p.categoryId == x.id).length}')),
                 AppColumn('Units in stock', numeric: true, (x) => Text(Qty.sum(products.where((p) => p.categoryId == x.id).map((p) => p.stockQty)).format())),
-                AppColumn('', flex: 1, numeric: true, (x) => IconButton(
-                      tooltip: 'Delete',
-                      icon: Icon(Icons.delete_outline, color: c.danger),
-                      onPressed: () async {
-                        if (await confirmDialog(context, title: 'Delete "${x.name}"?', message: 'Only empty categories can be deleted.', confirm: 'Delete', danger: true) && context.mounted) {
-                          await runAction(context, () => app.catalog.deleteCategory(x.id), success: 'Category deleted');
-                        }
-                      },
+                actionsColumn<ProductCategory>((x) => RowActionsMenu(
+                      onEdit: () => edit(x),
+                      onDelete: () => deleteCategoryRecord(context, ref, x, productCount: app.catalog.products(includeArchived: true).where((p) => p.categoryId == x.id).length),
                     )),
               ],
             ),

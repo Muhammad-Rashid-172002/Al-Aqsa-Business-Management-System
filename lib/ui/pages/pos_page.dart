@@ -38,6 +38,10 @@ class _PosPageState extends ConsumerState<PosPage> {
   );
   final _paidCtl = TextEditingController();
   final _discCtl = TextEditingController();
+  // Quick customer: typed at the bill instead of picking one; saved to
+  // Customers together with the bill.
+  final _qcName = TextEditingController();
+  final _qcPhone = TextEditingController();
   String _search = '';
   bool _paidTouched = false;
 
@@ -77,6 +81,8 @@ class _PosPageState extends ConsumerState<PosPage> {
     _scanCtl.dispose();
     _paidCtl.dispose();
     _discCtl.dispose();
+    _qcName.dispose();
+    _qcPhone.dispose();
     super.dispose();
   }
 
@@ -518,13 +524,27 @@ class _PosPageState extends ConsumerState<PosPage> {
     _paidTouched = false;
     _paidCtl.clear();
     _discCtl.clear();
+    _qcName.clear();
+    _qcPhone.clear();
     ref.read(posDraftProvider.notifier).state = app.sales.newDraft();
     _scanFocus.requestFocus();
   }
 
   Future<void> _complete() async {
+    if (draft.items.isEmpty) return _toast('Add products first.', error: true);
+    // A name or mobile typed for a walk-in: save that customer with the bill
+    // (an existing customer with the same mobile number is reused).
+    if (draft.customerId == null && (_qcName.text.trim().isNotEmpty || _qcPhone.text.trim().isNotEmpty)) {
+      try {
+        final p = await app.parties.findOrCreateCustomer(name: _qcName.text, phone: _qcPhone.text);
+        if (!mounted) return;
+        _setCustomer(p);
+      } catch (e) {
+        if (mounted) _toast(friendlyError(e), error: true);
+        return;
+      }
+    }
     var d = draft;
-    if (d.items.isEmpty) return _toast('Add products first.', error: true);
     final paid = Money.tryParse(_paidCtl.text) ?? const Money.zero();
     if (paid > d.total) {
       // Cash tendered more than total: record exact total, show change.
@@ -971,6 +991,33 @@ class _PosPageState extends ConsumerState<PosPage> {
                                 ),
                               ],
                             ),
+                            if (customer == null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: Row(children: [
+                                  Expanded(
+                                    child: TextField(
+                                      key: const ValueKey('pos-qc-name'),
+                                      controller: _qcName,
+                                      decoration: const InputDecoration(isDense: true, labelText: 'Customer name (optional)'),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextField(
+                                      key: const ValueKey('pos-qc-phone'),
+                                      controller: _qcPhone,
+                                      keyboardType: TextInputType.phone,
+                                      decoration: const InputDecoration(isDense: true, labelText: 'Mobile (optional)'),
+                                    ),
+                                  ),
+                                ]),
+                              ),
+                            if (customer == null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text('Filled in: the customer is saved to Customers with this bill.', style: TextStyle(color: c.textMuted, fontSize: 11)),
+                              ),
                             if (pendingInstall > 0)
                               Container(
                                 margin: const EdgeInsets.only(top: 6),

@@ -13,6 +13,7 @@ class Party {
   final String company;
   final String contactPerson;
   final String phone;
+  final String altPhone; // optional alternate number
   final String address;
   final String email;
   final Money openingBalance;
@@ -28,6 +29,7 @@ class Party {
     this.company = '',
     this.contactPerson = '',
     this.phone = '',
+    this.altPhone = '',
     this.address = '',
     this.email = '',
     this.openingBalance = const Money.zero(),
@@ -42,6 +44,7 @@ class Party {
     String? company,
     String? contactPerson,
     String? phone,
+    String? altPhone,
     String? address,
     String? email,
     Money? balance,
@@ -55,6 +58,7 @@ class Party {
         company: company ?? this.company,
         contactPerson: contactPerson ?? this.contactPerson,
         phone: phone ?? this.phone,
+        altPhone: altPhone ?? this.altPhone,
         address: address ?? this.address,
         email: email ?? this.email,
         openingBalance: openingBalance,
@@ -71,6 +75,7 @@ class Party {
         'company': company,
         'contactPerson': contactPerson,
         'phone': phone,
+        'altPhone': altPhone,
         'address': address,
         'email': email,
         'openingBalance': openingBalance.paisa,
@@ -87,6 +92,7 @@ class Party {
         company: s(j['company']),
         contactPerson: s(j['contactPerson']),
         phone: s(j['phone']),
+        altPhone: s(j['altPhone']),
         address: s(j['address']),
         email: s(j['email']),
         openingBalance: m(j['openingBalance']),

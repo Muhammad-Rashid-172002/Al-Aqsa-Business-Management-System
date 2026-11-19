@@ -151,3 +151,16 @@ atomic commit → verify counts → force re-login.
 * Excel: built-in .xlsx writer/reader (no extra package) + CSV.
 * Files: built-in offline file/folder browser (drives, USB) instead of a
   file-picker plugin.
+
+## Screen refresh (fixed 19 Nov)
+- Every commit to the store emits the names of the changed boxes on `DataStore.changes`, synchronously after the write.
+- `dataVersionProvider` turns that into a counter. Error-log-only writes are ignored.
+- `liveServicesProvider` re-publishes `AppServices` on every change. All pages and live detail dialogs `ref.watch` it.
+- **The bug:** it used to be a plain `Provider`, which only notifies when its value is a *different* object. It always returned the same `AppServices`, so screens were never told about changes. They updated only when rebuilt for another reason, such as switching pages.
+- **The fix:** it is now a `Notifier` whose `updateShouldNotify` returns true.
+- Reads stay cheap because `ServiceContext` caches decoded boxes per store revision.
+- Search text, filters, sort order and the table page survive refreshes, because they live in widget state. `AppTable` clamps the page if rows disappear.
+- Detail dialogs re-read their record by id on each refresh. If the record is gone (deleted, or a backup was restored), they show "Record not available" instead of crashing.
+- Regression tests:
+  - `test/live_refresh_test.dart` runs the real provider across all modules, and fails on the old code.
+  - `test/live_refresh_ui_test.dart` covers pages and dialogs on screen.

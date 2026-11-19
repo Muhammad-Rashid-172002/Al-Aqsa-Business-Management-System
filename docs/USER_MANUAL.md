@@ -66,10 +66,42 @@ The owner can approve genuine cases (another brand using the same number, or a m
 ## Reports
 Reports → pick a report → date range → **Excel / CSV / PDF**. Profit is **gross profit before shop expenses**.
 
+## Customers: who paid, who owes
+- **Bill for a new customer:** at the POS, if no customer is selected, type the **name and/or mobile** above the cart.
+  - The customer is saved in **Customers** together with the bill.
+  - An existing customer with the same mobile number (0300…, +92 300…) is used instead of a duplicate.
+  - Leave both empty for a plain walk-in cash sale.
+- **Customers tabs:**
+  - **All**
+  - **Balance due (baqaya)**: who owes, with the total
+  - **Paid up**: balance zero
+  - **Advance / credit**: paid more than billed
+- **Columns:** Total billed • Paid (net of voided payments and refunds) • Balance • Last payment.
+- Export / Print exports the tab you are on. Open a customer to see every invoice and payment in its Ledger and Payments tabs.
+
 ## Expenses and Profit & Loss
 - **Expenses**: record rent, bills, salaries, transport, maintenance and other shop costs. You can edit them, or delete them with a reason (they can be restored).
 - **Profit & Loss**: pick a month, year or custom range. *Gross profit* is sales minus discounts, returns and the cost of the goods sold. *Net operating profit* is gross profit minus shop expenses. *Cash received* is shown separately, because profit is not cash.
 - Every report and list has **Export / Print**: Excel, PDF, Print (choose your printer) and Preview. Details are in REPORTS_EXPENSES.md.
+
+## Restocking an existing product (Add More Serial Numbers)
+- When a product sells out and the same company and model arrives again, **don't create the product again**. Go to Products → ⋮ on the product → **Add More Serial Numbers**.
+- Name, company and model are shown read-only. Enter the new quantity, then scan, type, paste or import only the new serial numbers. The window shows Required / Entered / Remaining, and Save is enabled only when they match.
+- Choose **Purchase from supplier** (supplier, invoice no., date, cost, paid now) or **Opening / other stock** (cost, date, reason).
+- Each restock is its own cost batch. A sold serial is always costed at the price **its own batch** was bought for, so profit is exact even when prices change.
+- Old serial numbers keep their Sold / In stock / Installed status. A serial already recorded anywhere (this product's earlier purchases, another product or brand) is refused. Only the owner can approve a genuine manufacturer duplicate.
+- If you start "Add Product" for a product that already exists, the software offers to restock the existing one instead.
+- Non-serial items: ⋮ → **Purchase more stock**.
+
+## WhatsApp customers
+- In **Customers**, the small green chat button opens that customer's WhatsApp chat with a greeting already typed. Nothing is sent until **you** press Send in WhatsApp.
+- In a customer's details, **WhatsApp** and **Message templates** let you choose a General message, Payment reminder, Outstanding balance reminder, Invoice follow-up or Thank-you message, edit the text, and then open WhatsApp.
+  - The balance comes from the customer's ledger.
+  - Invoice details come from the latest completed invoice.
+  - Reminders are only offered when the customer actually owes money.
+- Numbers can be typed as 03001234567, 0300-1234567 or +92 300 1234567 (all become 923001234567). Foreign numbers keep their country code (+971…, +44…).
+- An optional alternate number can be saved. Landlines and invalid numbers are skipped, and a clear message is shown instead of a broken link.
+- WhatsApp Desktop opens directly if it is installed; otherwise the browser opens wa.me, which hands over to WhatsApp Desktop or WhatsApp Web. An internet connection is needed for WhatsApp itself; the rest of the software stays offline.
 
 ## Backup & restore
 * Automatic daily backup (time and how many to keep are configurable).

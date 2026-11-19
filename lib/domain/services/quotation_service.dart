@@ -74,6 +74,21 @@ class QuotationService {
     return updated;
   }
 
+  /// Deletes a quotation. Quotations never touch stock or accounts, so this
+  /// is safe, except for one converted to an invoice: that one is kept with
+  /// the invoice.
+  Future<void> delete(String id) async {
+    ctx.require(Permission.manageQuotations);
+    final q = byId(id);
+    if (q == null) throw const NotFoundException('Quotation not found.');
+    if (q.status == QuotationStatus.converted) {
+      throw const BusinessException('This quotation was converted to an invoice and is kept with it.');
+    }
+    final uow = ctx.uow()..delete(Boxes.quotations, id);
+    ctx.audit(uow, 'delete', 'quotation', id, q.number);
+    await uow.commit();
+  }
+
   /// Creates a draft invoice from an approved quotation.
   Future<Sale> convertToInvoice(String id) async {
     ctx.require(Permission.manageSales);

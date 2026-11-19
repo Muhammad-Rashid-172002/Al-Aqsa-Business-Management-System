@@ -19,6 +19,9 @@ import '../../domain/services/serial_service.dart';
 import '../../export/tabular.dart';
 import '../../printing/pdf_docs.dart';
 import '../print_actions.dart';
+import '../record_actions.dart';
+import 'add_serials_dialog.dart';
+import 'purchases_page.dart' show openNewPurchase, showNewPurchase;
 import '../providers.dart';
 import '../widgets/file_browser.dart';
 import '../widgets/forms.dart';
@@ -291,7 +294,20 @@ class _ProductsPageState extends ConsumerState<ProductsPage> {
                       ],
                     ),
                   ),
-                ],
+actionsColumn<Product>((p) => RowActionsMenu(
+                      onView: () => showProductDetails(context, p.id),
+                      onEdit: () => showProductDialog(context, ref, existing: p),
+                      onDelete: app.ctx.can(Permission.manageProducts) && (!p.archived || app.ctx.can(Permission.permanentDelete)) ? () => deleteProductRecord(context, ref, p) : null,
+                      extra: [
+                        if (!p.archived && p.requiresSerial && (app.ctx.can(Permission.managePurchases) || app.ctx.can(Permission.adjustStock)))
+                          RowAction('Add More Serial Numbers', Icons.qr_code_2, () => showAddSerials(context, p), keyName: 'row-add-serials'),
+                        if (!p.archived && !p.requiresSerial && app.ctx.can(Permission.managePurchases))
+                          RowAction('Purchase more stock', Icons.add_shopping_cart, () => showNewPurchase(context, ref, product: p), keyName: 'row-purchase'),
+                        if (app.ctx.can(Permission.manageProducts) && p.archived)
+                          RowAction('Restore', Icons.unarchive_outlined, () => runAction(context, () => app.catalog.restore(p.id), success: '"${p.name}" restored'), keyName: 'row-restore'),
+                      ],
+                    )),
+],
               ),
             ),
           ),
@@ -677,10 +693,50 @@ class _ProductDialogState extends ConsumerState<_ProductDialog> {
   );
 
   /// New product with stock: product + purchase saved together.
+  bool _forceNew = false;
+
+  /// "This product already exists": buy more of it, or create a genuinely
+  /// different product. Returns 'buy', 'new' or null (cancel).
+  Future<String?> _askExisting(Product p) {
+    final c = AppTheme.of(context);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const ValueKey('product-exists'),
+        title: const Text('This product already exists'),
+        content: SizedBox(
+          width: 460,
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('"${p.name}"${p.brand.isEmpty ? '' : ' • ${p.brand}'}${p.model.isEmpty ? '' : ' • ${p.model}'}  (${p.internalCode})', style: TextStyle(fontWeight: FontWeight.w700, color: c.text)),
+            const SizedBox(height: 4),
+            Text('In stock: ${p.stockQty.format()} ${p.unit}${p.archived ? ' • archived' : ''}', style: TextStyle(color: c.textMuted)),
+            const SizedBox(height: 12),
+            Text(
+              'To add new stock (even after it sold out), buy more of this product: '
+              'the new units and serial numbers join the same product, with their own purchase price and date. '
+              'Create a new product only if it is a different model.',
+              style: TextStyle(color: c.text),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(key: const ValueKey('product-exists-new'), onPressed: () => Navigator.pop(ctx, 'new'), child: const Text('Different model — create new')),
+          FilledButton.icon(
+            key: const ValueKey('product-exists-buy'),
+            onPressed: () => Navigator.pop(ctx, 'buy'),
+            icon: const Icon(Icons.add_shopping_cart, size: 18),
+            label: Text(p.requiresSerial ? 'Add more serial numbers to this product' : 'Buy more stock of this product'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<bool> _saveWithStock(ProductInput input) async {
     final app = ref.read(servicesProvider);
     final qty = _receiving;
-    var allowDuplicate = false;
+    var allowDuplicate = _forceNew;
     var approved = <String>{};
     while (true) {
       try {
@@ -738,15 +794,47 @@ class _ProductDialogState extends ConsumerState<_ProductDialog> {
         );
       }
     }
-    setState(() => _saving = true);
     final app = ref.read(servicesProvider);
+    // Same product again (e.g. it sold out)? Offer to buy more of the
+    // existing one instead of creating a second copy of the product.
+    var forceNew = false;
+    if (widget.existing == null) {
+      final same = app.catalog.findDuplicates(_input());
+      if (same.isNotEmpty) {
+        final choice = await _askExisting(same.first);
+        if (!mounted || choice == null) return;
+        if (choice == 'buy') {
+          var p = same.first;
+          if (p.archived) {
+            await app.catalog.restore(p.id);
+            p = app.catalog.byId(p.id) ?? p;
+          }
+          if (!mounted) return;
+          // The navigator outlives this form: close the form, then open the
+          // purchase from the navigator's context.
+          final host = Navigator.of(context).context;
+          Navigator.of(context).pop();
+          if (host.mounted) {
+            if (p.requiresSerial) {
+              showAddSerials(host, p);
+            } else {
+              openNewPurchase(host, product: p);
+            }
+          }
+          return;
+        }
+        forceNew = true;
+      }
+    }
+    setState(() => _saving = true);
     try {
       final input = _input();
       if (receiving) {
+        _forceNew = forceNew;
         if (!await _saveWithStock(input)) return;
       } else if (widget.existing == null) {
         try {
-          await app.catalog.create(input);
+          await app.catalog.create(input, allowDuplicate: forceNew);
         } on DuplicateException catch (e) {
           if (!mounted) return;
           final go = await confirmDialog(

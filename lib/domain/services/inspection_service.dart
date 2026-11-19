@@ -95,7 +95,15 @@ class InspectionService {
     final SerialStatus newStatus;
     switch (decision) {
       case InspectionDecision.sellable:
-        inv.stockIn(uow, productId: p.id, qty: take, unitCost: cost.perUnit(take), totalCost: cost, type: 'inspectionApproved', refType: 'inspection', refId: ref, reason: note);
+        final units = [
+          for (final k in keys)
+            if (uow.read(Boxes.serials, k) case final j?) SerialRecord.fromJson(j)
+        ];
+        if (units.isNotEmpty && units.length == keys.length) {
+          inv.stockInUnits(uow, productId: p.id, units: units, fallbackTotal: cost, type: 'inspectionApproved', refType: 'inspection', refId: ref, reason: note);
+        } else {
+          inv.stockIn(uow, productId: p.id, qty: take, unitCost: cost.perUnit(take), totalCost: cost, type: 'inspectionApproved', refType: 'inspection', refId: ref, reason: note);
+        }
         newStatus = SerialStatus.inStock;
       case InspectionDecision.repairable:
         inv.changeBucket(uow, p.id, StockBucket.repairable, take, 'inspection_repairable', 'inspection', ref, note, cost);

@@ -5,6 +5,8 @@ import '../../core/money.dart';
 import '../../domain/models/party.dart';
 import '../../export/tabular.dart';
 import '../print_actions.dart';
+import '../record_actions.dart';
+import '../../domain/models/user.dart';
 import '../providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -233,7 +235,11 @@ class _LedgersPageState extends ConsumerState<LedgersPage> {
                   ),
                 ),
               ),
-            ],
+actionsColumn<Payment>((x) => RowActionsMenu(
+                  onView: () => showPaymentActions(context, ref, x),
+                  onDelete: !x.voided && app.ctx.can(Permission.cancelTransactions) ? () => deletePaymentRecord(context, ref, x) : null,
+                )),
+],
           ),
         ],
       ),

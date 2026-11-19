@@ -10,7 +10,10 @@ import '../../domain/services/party_service.dart';
 import '../../export/tabular.dart';
 import '../../printing/pdf_docs.dart';
 import '../print_actions.dart';
+import '../record_actions.dart';
+import '../../domain/services/whatsapp.dart';
 import '../providers.dart';
+import '../whatsapp_actions.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/forms.dart';
@@ -25,10 +28,27 @@ class PartiesPage extends ConsumerStatefulWidget {
   ConsumerState<PartiesPage> createState() => _PartiesPageState();
 }
 
+/// Tabs of the Customers / Suppliers list.
+enum PartyTab { all, due, paid, advance }
+
 class _PartiesPageState extends ConsumerState<PartiesPage> {
   String _q = '';
-  bool _withBalance = false;
+  PartyTab _tab = PartyTab.all;
   bool _inactive = false;
+
+  static bool _inTab(PartyTab t, Party p) => switch (t) {
+        PartyTab.all => true,
+        PartyTab.due => p.balance.isPositive,
+        PartyTab.paid => p.balance.isZero,
+        PartyTab.advance => p.balance.isNegative,
+      };
+
+  String _tabLabel(PartyTab t) => switch (t) {
+        PartyTab.all => 'All',
+        PartyTab.due => widget.kind == PartyKind.customer ? 'Balance due (baqaya)' : 'To pay',
+        PartyTab.paid => widget.kind == PartyKind.customer ? 'Paid up' : 'Settled',
+        PartyTab.advance => widget.kind == PartyKind.customer ? 'Advance / credit' : 'Advance paid',
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -36,8 +56,24 @@ class _PartiesPageState extends ConsumerState<PartiesPage> {
     final app = ref.watch(liveServicesProvider);
     final k = widget.kind;
     final word = partyWord(k);
-    final rows = app.parties.list(k, query: _q, includeInactive: _inactive).where((p) => !_withBalance || !p.balance.isZero).toList();
+    final all = app.parties.list(k, query: _q, includeInactive: _inactive);
+    final rows = all.where((p) => _inTab(_tab, p)).toList();
+    final totals = app.parties.accountTotals(k);
     final total = k == PartyKind.customer ? app.parties.totalReceivables() : app.parties.totalPayables();
+    Widget tabChip(PartyTab t) {
+      final list = all.where((p) => _inTab(t, p)).toList();
+      final sum = Money.sum(list.map((p) => p.balance));
+      final tone = switch (t) { PartyTab.due => c.warning, PartyTab.advance => c.accent, _ => c.text };
+      return ChoiceChip(
+        key: ValueKey('ptab-${t.name}'),
+        selected: _tab == t,
+        onSelected: (_) => setState(() => _tab = t),
+        label: Text.rich(TextSpan(children: [
+          TextSpan(text: '${_tabLabel(t)}  ${list.length}', style: const TextStyle(fontWeight: FontWeight.w600)),
+          if (t == PartyTab.due || t == PartyTab.advance) TextSpan(text: '  •  ${sum.abs().format()}', style: TextStyle(color: tone, fontWeight: FontWeight.w700)),
+        ])),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.all(28),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -46,15 +82,16 @@ class _PartiesPageState extends ConsumerState<PartiesPage> {
           subtitle: '${k == PartyKind.customer ? 'Total receivable' : 'Total payable'}: ${total.format()}',
           breadcrumbs: ['${word}s'],
           actions: [
-            ExportMenu(tables: () => [_table(rows)]),
+            ExportMenu(tables: () => [_table(rows, totals)]),
             FilledButton.icon(onPressed: () => showPartyForm(context, ref, k), icon: const Icon(Icons.add), label: Text('Add $word')),
           ],
         ),
         Wrap(spacing: 12, runSpacing: 12, crossAxisAlignment: WrapCrossAlignment.center, children: [
           SearchBox(hint: 'Search name, phone, company…', onChanged: (v) => setState(() => _q = v)),
-          FilterChip(label: const Text('With balance only'), selected: _withBalance, onSelected: (v) => setState(() => _withBalance = v)),
           FilterChip(label: const Text('Show inactive'), selected: _inactive, onSelected: (v) => setState(() => _inactive = v)),
         ]),
+        const SizedBox(height: 12),
+        Wrap(spacing: 8, runSpacing: 8, children: [for (final t in PartyTab.values) tabChip(t)]),
         const SizedBox(height: 16),
         Expanded(
           child: SingleChildScrollView(
@@ -68,13 +105,32 @@ class _PartiesPageState extends ConsumerState<PartiesPage> {
                       if (p.company.isNotEmpty) Text(p.company, style: TextStyle(color: c.textMuted, fontSize: 12)),
                     ])),
                 AppColumn('Phone', (p) => Text(p.phone)),
-                AppColumn('Address', flex: 3, (p) => Text(p.address, overflow: TextOverflow.ellipsis)),
-                AppColumn('Balance', numeric: true, (p) {
+                AppColumn(k == PartyKind.customer ? 'Total billed' : 'Total bought', numeric: true, (p) => Text((totals[p.id]?.billed ?? p.balance).format())),
+                AppColumn('Paid', numeric: true, (p) => Text((totals[p.id]?.paid ?? const Money.zero()).format(), style: TextStyle(color: c.accent))),
+                AppColumn(k == PartyKind.customer ? 'Balance (baqaya)' : 'Balance', numeric: true, (p) {
                   final tone = p.balance.isPositive ? c.warning : (p.balance.isNegative ? c.accent : c.textMuted);
-                  return Text(p.balance.format(), style: TextStyle(color: tone, fontWeight: FontWeight.w700));
+                  return Text(p.balance.isNegative ? '${p.balance.abs().format()} adv.' : p.balance.format(), style: TextStyle(color: tone, fontWeight: FontWeight.w700));
+                }),
+                AppColumn('Last payment', (p) {
+                  final d = totals[p.id]?.lastPayment;
+                  return Text(d == null ? '—' : dateFmt.format(d), style: TextStyle(color: c.textMuted));
                 }),
                 AppColumn('Status', flex: 1, (p) => p.active ? StatusPill('Active', c.accent) : StatusPill('Inactive', c.textMuted)),
-              ],
+                if (k == PartyKind.customer)
+                  AppColumn<Party>('', flex: 1, minWidth: 48, numeric: true, (p) => Align(alignment: Alignment.centerRight, child: WhatsAppButton(party: p))),
+                actionsColumn<Party>((p) {
+                  final can = app.ctx.can(k == PartyKind.customer ? Permission.manageCustomers : Permission.manageSuppliers);
+                  return RowActionsMenu(
+                    onView: () => showPartyDetail(context, ref, p),
+                    onEdit: can ? () => showPartyForm(context, ref, k, existing: p) : null,
+                    onDelete: can && (p.active || app.ctx.can(Permission.permanentDelete)) ? () => deletePartyRecord(context, ref, p) : null,
+                    extra: [
+                      if (can && !p.active)
+                        RowAction('Restore', Icons.unarchive_outlined, () => runAction(context, () => app.parties.restore(k, p.id), success: '"${p.name}" restored'), keyName: 'row-restore'),
+                    ],
+                  );
+                }),
+],
             ),
           ),
         ),
@@ -82,8 +138,12 @@ class _PartiesPageState extends ConsumerState<PartiesPage> {
     );
   }
 
-  ExportTable _table(List<Party> rows) => ExportTable('${partyWord(widget.kind)}s', ['Name', 'Company', 'Phone', 'Address', 'Balance'], [
-        for (final p in rows) [p.name, p.company, p.phone, p.address, p.balance.paisa / 100]
+  ExportTable _table(List<Party> rows, Map<String, PartyTotals> totals) =>
+      ExportTable('${partyWord(widget.kind)}s — ${_tabLabel(_tab)}', ['Name', 'Company', 'Phone', 'Address', 'Total billed', 'Paid', 'Balance', 'Last payment'], [
+        for (final p in rows)
+          [p.name, p.company, p.phone, p.address, (totals[p.id]?.billed ?? p.balance).paisa / 100, (totals[p.id]?.paid ?? const Money.zero()).paisa / 100, p.balance.paisa / 100, totals[p.id]?.lastPayment]
+      ], footer: [
+        ['Total (${rows.length})', null, null, null, Money.sum(rows.map((p) => totals[p.id]?.billed ?? p.balance)).paisa / 100, Money.sum(rows.map((p) => totals[p.id]?.paid ?? const Money.zero())).paisa / 100, Money.sum(rows.map((p) => p.balance)).paisa / 100, null]
       ]);
 }
 
@@ -93,6 +153,7 @@ Future<Party?> showPartyForm(BuildContext context, WidgetRef ref, PartyKind kind
   final company = TextEditingController(text: existing?.company);
   final contact = TextEditingController(text: existing?.contactPerson);
   final phone = TextEditingController(text: existing?.phone);
+  final altPhone = TextEditingController(text: existing?.altPhone);
   final address = TextEditingController(text: existing?.address);
   final email = TextEditingController(text: existing?.email);
   final notes = TextEditingController(text: existing?.notes);
@@ -117,6 +178,7 @@ Future<Party?> showPartyForm(BuildContext context, WidgetRef ref, PartyKind kind
               company: company.text,
               contactPerson: contact.text,
               phone: phone.text,
+              altPhone: altPhone.text,
               address: address.text,
               email: email.text,
               notes: notes.text,
@@ -124,7 +186,7 @@ Future<Party?> showPartyForm(BuildContext context, WidgetRef ref, PartyKind kind
             );
           } else {
             saved = await app.parties.update(existing.copyWith(
-                name: name.text, company: company.text, contactPerson: contact.text, phone: phone.text, address: address.text, email: email.text, notes: notes.text, active: active));
+                name: name.text, company: company.text, contactPerson: contact.text, phone: phone.text, altPhone: altPhone.text, address: address.text, email: email.text, notes: notes.text, active: active));
           }
           if (ctx.mounted) {
             showToast(ctx, '$word saved');
@@ -141,7 +203,11 @@ Future<Party?> showPartyForm(BuildContext context, WidgetRef ref, PartyKind kind
           key: key,
           child: Column(children: [
             FieldRow([LabeledField('Name *', name, autofocus: true, validator: (v) => (v ?? '').trim().isEmpty ? 'Required' : null)]),
-            FieldRow([LabeledField('Phone', phone), LabeledField(kind == PartyKind.supplier ? 'Company name' : 'Company (optional)', company)]),
+            FieldRow([
+              LabeledField('Mobile (e.g. 03001234567 or +971501234567)', phone, validator: _phoneValidator),
+              LabeledField('Alternate number (optional)', altPhone, validator: _phoneValidator),
+            ]),
+            FieldRow([LabeledField(kind == PartyKind.supplier ? 'Company name' : 'Company (optional)', company)]),
             FieldRow([LabeledField('Contact person', contact), LabeledField('Email (optional)', email)]),
             FieldRow([LabeledField('Address', address)]),
             if (existing == null)
@@ -191,7 +257,9 @@ class _PartyDetailState extends ConsumerState<_PartyDetail> {
     final c = AppTheme.of(context);
     final app = ref.watch(liveServicesProvider);
     final user = ref.watch(currentUserProvider)!;
-    final p = app.parties.byId(widget.kind, widget.partyId)!;
+    final p0 = app.parties.byId(widget.kind, widget.partyId);
+    if (p0 == null) return RecordGone(widget.kind == PartyKind.customer ? 'customer' : 'supplier');
+    final p = p0;
     final st = app.parties.statement(widget.kind, p.id, from: _from, to: _to);
     final isC = widget.kind == PartyKind.customer;
     final docs = isC
@@ -214,7 +282,7 @@ class _PartyDetailState extends ConsumerState<_PartyDetail> {
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: c.text)),
-                    Text([p.phone, p.address].where((e) => e.isNotEmpty).join(' • '), maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.textMuted)),
+                    Text([p.phone, p.altPhone, p.address].where((e) => e.isNotEmpty).join(' • '), maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.textMuted)),
                   ]),
                 ),
                 const SizedBox(width: 12),
@@ -234,6 +302,22 @@ class _PartyDetailState extends ConsumerState<_PartyDetail> {
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
               child: Wrap(spacing: 10, runSpacing: 10, children: [
+                if (isC) ...[
+                  FilledButton.icon(
+                    key: const ValueKey('detail-whatsapp'),
+                    style: FilledButton.styleFrom(backgroundColor: whatsAppGreen, foregroundColor: Colors.white),
+                    onPressed: () => showWhatsAppComposer(context, ref, p),
+                    icon: const WhatsAppIcon(size: 18),
+                    label: const Text('WhatsApp'),
+                  ),
+                  PopupMenuButton<WaTemplate>(
+                    key: const ValueKey('detail-wa-templates'),
+                    tooltip: 'WhatsApp message templates',
+                    onSelected: (t) => showWhatsAppComposer(context, ref, p, initial: t),
+                    itemBuilder: (_) => [for (final t in WaTemplate.values) PopupMenuItem(value: t, child: Text(t.label))],
+                    child: IgnorePointer(child: OutlinedButton.icon(onPressed: () {}, icon: const Icon(Icons.quickreply_outlined, size: 18), label: const Text('Message templates'))),
+                  ),
+                ],
                 if (user.can(Permission.manageLedgers))
                   FilledButton.icon(
                     onPressed: () => showPaymentDialog(context, ref, p),
@@ -321,7 +405,11 @@ class _PartyDetailState extends ConsumerState<_PartyDetail> {
                       AppColumn('Method', (x) => Text(x.method.label)),
                       AppColumn('Amount', numeric: true, (x) => Text('${x.direction == PaymentDirection.received ? '+' : '−'}${x.amount.format()}')),
                       AppColumn('Status', (x) => x.voided ? StatusPill('Voided', c.danger) : StatusPill('OK', c.accent)),
-                    ],
+                      actionsColumn<Payment>((x) => RowActionsMenu(
+                            onView: () => showPaymentActions(context, ref, x),
+                            onDelete: !x.voided && app.ctx.can(Permission.cancelTransactions) ? () => deletePaymentRecord(context, ref, x, partyName: p.name) : null,
+                          )),
+],
                   ),
                 ),
               ]),
@@ -490,4 +578,13 @@ Future<void> showPaymentActions(BuildContext context, WidgetRef ref, Payment pay
       ],
     ),
   );
+}
+
+/// Empty is fine (the number is optional); otherwise it must look like a
+/// phone number. Landlines are allowed here; WhatsApp buttons simply skip
+/// numbers WhatsApp cannot use.
+String? _phoneValidator(String? v) {
+  final s0 = (v ?? '').trim();
+  if (s0.isEmpty) return null;
+  return normalizeWhatsAppNumber(s0) == null && !RegExp(r'^\+?[\d\s\-()/]{6,}$').hasMatch(s0) ? 'Enter a valid phone number' : null;
 }

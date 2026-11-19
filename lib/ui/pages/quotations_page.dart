@@ -10,6 +10,7 @@ import '../../domain/models/product.dart';
 import '../../printing/pdf_docs.dart';
 import '../../export/tabular.dart';
 import '../print_actions.dart';
+import '../record_actions.dart';
 import '../providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -72,7 +73,11 @@ class _QuotationsPageState extends ConsumerState<QuotationsPage> {
                 AppColumn('Valid until', (x) => Text(dateFmt.format(x.expiryDate))),
                 AppColumn('Total', numeric: true, (x) => Text(x.total.format())),
                 AppColumn('Status', (x) => StatusPill(x.statusOn(now).name, quoteTone(c, x.statusOn(now)))),
-              ],
+actionsColumn<Quotation>((x) => RowActionsMenu(
+                    onView: () => showQuotationEditor(context, ref, existing: x),
+                    onDelete: x.status == QuotationStatus.converted ? null : () => deleteQuotationRecord(context, ref, x),
+                  )),
+],
             ),
           ),
         ),
