@@ -62,6 +62,8 @@ void main() {
     expect(c.name, 'Customer 0300 1112223');
     final d = await app.parties.findOrCreateCustomer(name: 'Only Name');
     expect(d.phone, '');
+    final d2 = await app.parties.findOrCreateCustomer(name: 'only  name');
+    expect(d2.id, d.id);
     expect(app.parties.list(PartyKind.customer).length, 3);
     expect(PartyService.phoneKey('051-1234567'), '0511234567');
     expect(PartyService.phoneKey('12'), '');
@@ -72,5 +74,38 @@ void main() {
       err = e;
     }
     expect(err, isNotNull);
+  });
+
+  test('same name without a mobile reuses the customer; 4 bills in a day land on one account', () async {
+    final app = env.app;
+    final cable = await env.product('Cable', cost: 100, price: 1000);
+    final sup = await env.supplier();
+    await app.purchases.create(supplierId: sup.id, date: env.clock.now, lines: [PurchaseLineInput(productId: cable.id, qty: q(50), unitCost: rs(100))]);
+    Future<void> bill(String name, String phone, int qty, int paid) async {
+      final c = await app.parties.findOrCreateCustomer(name: name, phone: phone);
+      final d = app.sales.newDraft().copyWith(customerId: c.id, customerName: c.name, items: [app.sales.lineFor(env.reload(cable.id), qty: q(qty))]);
+      await app.sales.complete(d.copyWith(paidAtSale: rs(paid)));
+    }
+
+    await bill('Ahmed', '', 10, 10000);
+    await bill('  ahmed ', '', 5, 2000); // case / spaces ignored
+    await bill('AHMED', '', 8, 0);
+    await bill('Ahmed', '0300 1234567', 2, 2000); // number added to the same customer
+    final ahmeds = app.parties.list(PartyKind.customer).where((p) => PartyService.nameKey(p.name) == 'ahmed').toList();
+    expect(ahmeds.length, 1);
+    final a = ahmeds.first;
+    expect(a.phone, '0300 1234567');
+    final t = app.parties.accountTotals(PartyKind.customer)[a.id]!;
+    expect(t.billed, rs(25000));
+    expect(t.paid, rs(14000));
+    expect(a.balance, rs(11000));
+    expect(app.sales.list().where((s) => s.customerId == a.id).length, 4);
+    // Now known by mobile too, whatever name is typed.
+    expect(app.parties.matchCustomer(phone: '+92 300 1234567')!.id, a.id);
+    expect(app.parties.matchCustomer(name: 'Ahmed')!.id, a.id);
+    // Same name, different mobile = a different person.
+    final other = await app.parties.findOrCreateCustomer(name: 'Ahmed', phone: '0311 9998887');
+    expect(other.id == a.id, isFalse);
+    expect(app.parties.matchCustomer(name: 'Nobody'), isNull);
   });
 }

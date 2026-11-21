@@ -393,18 +393,57 @@ class PartyService {
   /// The customer for a bill typed at the POS: an existing one with the same
   /// mobile number (0300…, +92 300…, 92300… all match), otherwise a new
   /// customer saved with this name and number.
+  /// The existing customer a name / mobile typed at the POS belongs to,
+  /// or null when it is a new customer.
+  ///
+  /// * Mobile typed: the customer with that mobile (main or alternate
+  ///   number). If none has it, a same-name customer who has no mobile
+  ///   saved yet (the number is then added to them). A same-name
+  ///   customer with a different mobile is a different person.
+  /// * Only a name: the customer with that name (case and extra spaces
+  ///   ignored). With several of that name, the one without a mobile,
+  ///   otherwise the oldest.
+  Party? matchCustomer({String name = '', String phone = ''}) {
+    final n = nameKey(name);
+    final key = phoneKey(phone);
+    final all = list(PartyKind.customer)..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    bool hasPhone(Party p) => phoneKey(p.phone).isNotEmpty || phoneKey(p.altPhone).isNotEmpty;
+    if (key.isNotEmpty) {
+      for (final p in all) {
+        if (phoneKey(p.phone) == key || phoneKey(p.altPhone) == key) return p;
+      }
+      if (n.isEmpty) return null;
+      for (final p in all) {
+        if (nameKey(p.name) == n && !hasPhone(p)) return p;
+      }
+      return null;
+    }
+    if (n.isEmpty) return null;
+    final same = all.where((p) => nameKey(p.name) == n).toList();
+    if (same.isEmpty) return null;
+    for (final p in same) {
+      if (!hasPhone(p)) return p;
+    }
+    return same.first;
+  }
+
   Future<Party> findOrCreateCustomer({String name = '', String phone = ''}) async {
     final n = name.trim();
     final ph = phone.trim();
     if (n.isEmpty && ph.isEmpty) throw const ValidationException('Enter the customer\'s name or mobile number.');
-    final key = phoneKey(ph);
-    if (key.isNotEmpty) {
-      for (final p in list(PartyKind.customer)) {
-        if (phoneKey(p.phone) == key || phoneKey(p.altPhone) == key) return p;
+    final found = matchCustomer(name: n, phone: ph);
+    if (found != null) {
+      final key = phoneKey(ph);
+      if (key.isNotEmpty && phoneKey(found.phone).isEmpty && phoneKey(found.altPhone).isEmpty) {
+        return update(found.copyWith(phone: ph));
       }
+      return found;
     }
     return create(kind: PartyKind.customer, name: n.isEmpty ? 'Customer $ph' : n, phone: ph);
   }
+
+  /// A name in one comparable form: lower case, single spaces.
+  static String nameKey(String name) => name.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
   /// Digits of a phone number in one comparable form (Pakistani numbers
   /// as 03XXXXXXXXX). Empty when there are too few digits to compare.

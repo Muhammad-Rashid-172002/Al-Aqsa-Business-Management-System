@@ -50,9 +50,15 @@ class _PosPageState extends ConsumerState<PosPage> {
 
   Sale get draft => ref.read(posDraftProvider) ?? _fallback;
 
+  void _qcChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
+    _qcName.addListener(_qcChanged);
+    _qcPhone.addListener(_qcChanged);
     Future.microtask(() {
       if (!mounted) return;
       final n = ref.read(posDraftProvider.notifier);
@@ -1016,7 +1022,28 @@ class _PosPageState extends ConsumerState<PosPage> {
                             if (customer == null)
                               Padding(
                                 padding: const EdgeInsets.only(top: 4),
-                                child: Text('Filled in: the customer is saved to Customers with this bill.', style: TextStyle(color: c.textMuted, fontSize: 11)),
+                                child: Builder(builder: (_) {
+                                  final typed = _qcName.text.trim().isNotEmpty || _qcPhone.text.trim().isNotEmpty;
+                                  final match = typed ? app.parties.matchCustomer(name: _qcName.text, phone: _qcPhone.text) : null;
+                                  if (match == null) {
+                                    return Text(
+                                        typed
+                                            ? 'New customer: saved to Customers with this bill.'
+                                            : 'Filled in: the customer is saved to Customers with this bill.',
+                                        key: const ValueKey('pos-qc-hint'),
+                                        style: TextStyle(color: c.textMuted, fontSize: 11));
+                                  }
+                                  final bal = match.balance;
+                                  final balText = bal.isPositive
+                                      ? 'baqaya ${bal.format()}'
+                                      : bal.isNegative
+                                          ? 'advance ${(-bal).format()}'
+                                          : 'no balance';
+                                  final ph = match.phone.isEmpty ? '' : ' · ${match.phone}';
+                                  return Text('Existing customer: ${match.name}$ph ($balText). This bill goes to the same account.',
+                                      key: const ValueKey('pos-qc-hint'),
+                                      style: TextStyle(color: c.accent, fontSize: 11, fontWeight: FontWeight.w600));
+                                }),
                               ),
                             if (pendingInstall > 0)
                               Container(
