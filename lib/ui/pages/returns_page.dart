@@ -119,7 +119,7 @@ class ReturnsPage extends ConsumerWidget {
             ListTile(
               dense: true,
               title: Text('${l.name} × ${l.qty.format()}'),
-              subtitle: Text([if (l.serials.isNotEmpty) 'S/N ${l.serials.map(SerialRecord.displayOf).join(', ')}', if (sales) 'Condition: ${l.condition}'].join(' • ')),
+              subtitle: Text([if (l.serials.isNotEmpty) 'S/N ${l.serials.map(SerialRecord.displayOf).join(', ')}', if (sales) 'Condition: ${returnConditionLabel(l.condition)} (${returnConditionStock(l.condition)})'].join(' • ')),
               trailing: Text(l.amount.format()),
             ),
           const Divider(),
@@ -161,7 +161,12 @@ Future<void> showSalesReturnDialog(BuildContext context, WidgetRef ref, Sale sal
   await _returnDialog(context,
       title: 'Customer return • ${sale.number}',
       lines: lines,
-      conditions: const {'resellable': 'Good - back to stock', 'inspect': 'Needs inspection', 'damaged': 'Damaged'},
+      conditions: const {
+        'resellable': 'Saleable - back to stock',
+        'faulty': 'Faulty - kept aside',
+        'damaged': 'Damaged',
+        'inspect': 'Needs inspection',
+      },
       allowCredit: sale.customerId != null,
       submit: (inputs, reason, mode, method) => app.sales.createReturn(saleId: sale.id, lines: inputs, reason: reason, refundMode: mode, method: method));
 }

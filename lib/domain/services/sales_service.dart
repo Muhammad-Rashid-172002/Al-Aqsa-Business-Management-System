@@ -282,6 +282,7 @@ class SalesService {
     final items = [...sale.items];
     final out = <ReturnLine>[];
     for (final l in lines) {
+      if (!returnConditions.contains(l.condition)) throw ValidationException('Unknown return condition "${l.condition}".');
       final idx = items.indexWhere((e) => e.productId == l.productId && (e.qty - e.returnedQty).isPositive);
       if (idx < 0) throw const ValidationException('Product is not on this invoice or already fully returned.');
       final it = items[idx];
@@ -307,6 +308,9 @@ class SalesService {
             serials.save(uow,
                 r.transition(SerialStatus.damaged, at: when, note: 'Customer return $number (damaged)', refType: 'sales_return', refId: id, userId: ctx.userId, clearCustomer: true, clearSale: true, clearWarranty: true));
           }
+        case 'faulty':
+          // Not sellable: kept apart in the inspection queue, marked Faulty.
+          inspections.enqueue(uow, product: p, qty: l.qty, cost: cost, serialRecords: recs, sourceType: 'sales_return', sourceId: id, condition: 'Faulty', reason: '$number: $reason');
         case 'inspect':
           inspections.enqueue(uow, product: p, qty: l.qty, cost: cost, serialRecords: recs, sourceType: 'sales_return', sourceId: id, condition: 'customer return', reason: reason);
         default:

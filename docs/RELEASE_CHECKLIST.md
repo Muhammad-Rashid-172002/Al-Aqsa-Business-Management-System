@@ -123,3 +123,11 @@ the developer; ☐ = must be checked by a person on the real machine.
 ## Full cascade delete (19 Nov — not yet tested on Windows)
 - [ ] Demo customer with 2–3 invoices, payments and an outstanding balance: Delete shows the counts (invoices, payments, ledger entries…). After deleting, the Dashboard, Profit & Loss and receivables drop by exactly that customer's figures, and stock quantities are unchanged.
 - [ ] Supplier with purchases: after deleting, its stock is still in stock with the same value. Selling one of its serials uses that batch's cost.
+
+## Customer statement A4 (21 Nov — not yet tested on Windows)
+- [ ] Customers → Print Customer Statement → pick a customer → Print Preview shows the A4 statement.
+- [ ] Complete history / This month / Previous month / Custom range give the expected opening and closing balance.
+- [ ] Closing balance equals the customer's balance on the Customers page and the dashboard receivable share.
+- [ ] Print on the shop's A4 printer: headers repeat on every page, page numbers show, no cut-off amounts.
+- [ ] Export PDF opens in a PDF reader with the same content as the print.
+- [ ] Customer return with Saleable / Faulty / Damaged: stock goes to available / inspection (Faulty) / damaged; statement shows each return once as a credit and in the Product Returns table.

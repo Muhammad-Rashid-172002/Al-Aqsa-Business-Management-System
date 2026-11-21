@@ -12,6 +12,7 @@ import '../domain/models/documents.dart';
 import '../domain/models/operations.dart';
 import '../domain/models/party.dart';
 import '../domain/models/product.dart';
+import '../domain/services/customer_statement.dart';
 import '../domain/services/party_service.dart';
 import '../export/tabular.dart';
 
@@ -438,6 +439,317 @@ Future<Uint8List> statementPdf(AppSettings st, PartyStatement s, {DateTime? from
   ));
   return doc.save();
 }
+
+// ───────────────────────── Detailed customer statement (A4) ─────────────────────────
+
+String _num(Money m0) => m0.isNegative ? '-${(-m0).format(symbol: '').trim()}' : m0.format(symbol: '').trim();
+String _bal(Money m0) => m0.isNegative ? '${_num(-m0)} Adv' : _num(m0);
+
+/// Full customer statement on A4: shop and customer details, every invoice
+/// with its product lines, payments, returns and adjustments with a running
+/// balance, a summary, and the paid / partly paid / unpaid state of every
+/// invoice. Column headers repeat on every page; pages are numbered.
+Future<Uint8List> customerStatementPdf(AppSettings st, CustomerStatement s) async {
+  final h = PdfHelper(st);
+  final c = s.customer;
+  final doc = pw.Document(title: 'Customer Statement ${c.name}');
+  final period = s.from == null && s.to == null
+      ? 'Complete history (to ${_d.format(s.generatedAt)})'
+      : '${s.from == null ? 'Start' : _d.format(s.from!)} to ${_d.format(s.to ?? s.generatedAt)}';
+  const fs = 7.6;
+  const head = ['Date', 'Voucher / Inv. No.', 'Product / Transaction Description', 'Qty', 'Unit Price', 'Total Price', 'Debit', 'Credit', 'Balance'];
+  const widths = <int, pw.TableColumnWidth>{
+    0: pw.FixedColumnWidth(50),
+    1: pw.FixedColumnWidth(56),
+    2: pw.FlexColumnWidth(),
+    3: pw.FixedColumnWidth(28),
+    4: pw.FixedColumnWidth(48),
+    5: pw.FixedColumnWidth(52),
+    6: pw.FixedColumnWidth(52),
+    7: pw.FixedColumnWidth(52),
+    8: pw.FixedColumnWidth(58),
+  };
+  const right = {3, 4, 5, 6, 7, 8};
+  const border = PdfColor.fromInt(0xFF9CA3AF);
+
+  PdfColor? shade(StmtRowKind k) => switch (k) {
+        StmtRowKind.opening => const PdfColor.fromInt(0xFFE5E7EB),
+        StmtRowKind.invoiceTotal || StmtRowKind.repairTotal => const PdfColor.fromInt(0xFFEFF6F2),
+        StmtRowKind.payment => const PdfColor.fromInt(0xFFE7F5EC),
+        StmtRowKind.returnTotal || StmtRowKind.invoiceCancel || StmtRowKind.adjustment => const PdfColor.fromInt(0xFFFFF4E0),
+        StmtRowKind.refund || StmtRowKind.paymentVoid => const PdfColor.fromInt(0xFFFDECEC),
+        _ => null,
+      };
+
+  pw.Widget cell(String text, int col, {bool bold = false, PdfColor color = PdfColors.black}) => pw.Padding(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 3),
+        child: pw.Text(ascii(text),
+            textAlign: right.contains(col) ? pw.TextAlign.right : pw.TextAlign.left,
+            style: pw.TextStyle(fontSize: fs, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal, color: color)),
+      );
+
+  final invoiceState = {for (final i in s.invoices) i.number: i};
+  final tableRows = <pw.TableRow>[
+    pw.TableRow(
+      repeat: true,
+      decoration: const pw.BoxDecoration(color: _emerald),
+      children: [
+        for (var i = 0; i < head.length; i++)
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+            child: pw.Text(head[i],
+                textAlign: right.contains(i) ? pw.TextAlign.right : pw.TextAlign.left,
+                style: pw.TextStyle(fontSize: fs, fontWeight: pw.FontWeight.bold, color: PdfColors.white)),
+          ),
+      ],
+    ),
+  ];
+  for (final r in s.rows) {
+    final posting = r.isPosting;
+    final bold = posting;
+    var desc = r.description;
+    if (r.kind == StmtRowKind.invoiceTotal) {
+      final inv = invoiceState[r.voucher];
+      if (inv != null) {
+        desc += switch (inv.state) {
+          InvoiceState.paid => ' - PAID',
+          InvoiceState.partlyPaid => ' - PARTLY PAID (due ${_num(inv.due)})',
+          InvoiceState.unpaid => ' - UNPAID',
+          InvoiceState.cancelled => ' - CANCELLED',
+        };
+      }
+    }
+    final grey = posting ? PdfColors.black : const PdfColor.fromInt(0xFF374151);
+    tableRows.add(pw.TableRow(
+      decoration: shade(r.kind) == null ? null : pw.BoxDecoration(color: shade(r.kind)),
+      children: [
+        cell(r.date == null ? '' : _d.format(r.date!), 0, color: grey),
+        cell(r.voucher, 1, color: grey),
+        cell(desc, 2, bold: bold),
+        cell(r.qty?.format() ?? '', 3),
+        cell(r.unitPrice == null ? '' : _num(r.unitPrice!), 4),
+        cell(r.totalPrice == null ? '' : _num(r.totalPrice!), 5, bold: bold && r.totalPrice != null),
+        cell(posting && r.debit.isPositive ? _num(r.debit) : '', 6, bold: true),
+        cell(posting && r.credit.isPositive ? _num(r.credit) : '', 7, bold: true),
+        cell(posting ? _bal(r.balance!) : '', 8, bold: true),
+      ],
+    ));
+  }
+  tableRows.add(pw.TableRow(
+    decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFE5E7EB)),
+    children: [
+      cell('', 0),
+      cell('', 1),
+      cell('TOTAL (opening + transactions)', 2, bold: true),
+      cell('', 3),
+      cell('', 4),
+      cell('', 5),
+      cell(_num(s.totalDebit + (s.openingBalance.isPositive ? s.openingBalance : const Money.zero())), 6, bold: true),
+      cell(_num(s.totalCredit + (s.openingBalance.isNegative ? -s.openingBalance : const Money.zero())), 7, bold: true),
+      cell(_bal(s.closingBalance), 8, bold: true),
+    ],
+  ));
+
+  pw.Widget infoBox(String title, List<String> lines, {pw.CrossAxisAlignment align = pw.CrossAxisAlignment.start}) => pw.Container(
+        padding: const pw.EdgeInsets.all(8),
+        decoration: pw.BoxDecoration(border: pw.Border.all(color: border, width: 0.6)),
+        child: pw.Column(crossAxisAlignment: align, children: [
+          pw.Text(title, style: const pw.TextStyle(fontSize: 7.5, color: _grey)),
+          pw.SizedBox(height: 2),
+          for (var i = 0; i < lines.length; i++)
+            pw.Text(ascii(lines[i]), style: pw.TextStyle(fontSize: i == 0 ? 11 : 8.5, fontWeight: i == 0 ? pw.FontWeight.bold : pw.FontWeight.normal)),
+        ]),
+      );
+
+  final closingWord = s.closingBalance.isNegative ? 'Advance with us' : 'Closing outstanding balance';
+  final summary = <(String, String, bool)>[
+    ('Opening balance', _bal(s.openingBalance), false),
+    ('Total purchases / debit (+)', _num(s.totalDebit), false),
+    ('Total payments received (-)', _num(s.totalPayments), false),
+    ('Total returns (-)', _num(s.totalReturns), false),
+    ('Adjustments / cancellations (-)', _num(s.totalOtherCredits), false),
+    ('$closingWord (Rs)', _bal(s.closingBalance), true),
+  ];
+
+  doc.addPage(pw.MultiPage(
+    pageFormat: PdfPageFormat.a4,
+    margin: const pw.EdgeInsets.fromLTRB(24, 24, 24, 28),
+    maxPages: 1000,
+    header: (ctx) => ctx.pageNumber == 1
+        ? pw.SizedBox()
+        : pw.Padding(
+            padding: const pw.EdgeInsets.only(bottom: 6),
+            child: pw.Row(children: [
+              pw.Expanded(child: pw.Text(ascii('${st.businessName} - Customer Statement: ${c.name}'), style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: _emerald))),
+              pw.Text(ascii(period), style: const pw.TextStyle(fontSize: 8, color: _grey)),
+            ]),
+          ),
+    footer: (ctx) => pw.Container(
+      margin: const pw.EdgeInsets.only(top: 6),
+      padding: const pw.EdgeInsets.only(top: 3),
+      decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(color: _line, width: 0.6))),
+      child: pw.Row(children: [
+        pw.Expanded(child: pw.Text(ascii('Generated ${_dt.format(s.generatedAt)} - ${st.businessName}'), style: const pw.TextStyle(fontSize: 7.5, color: _grey))),
+        pw.Text('Page ${ctx.pageNumber} of ${ctx.pagesCount}', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
+      ]),
+    ),
+    build: (_) => [
+      h.header('Customer Statement', [
+        ('Statement date', _d.format(s.generatedAt)),
+        ('Period', period),
+        ('Currency', st.currencySymbol),
+      ]),
+      pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+        pw.Expanded(
+          flex: 3,
+          child: infoBox('CUSTOMER', [
+            c.name,
+            if (c.company.isNotEmpty) c.company,
+            [if (c.phone.isNotEmpty) 'Mobile: ${c.phone}', if (c.altPhone.isNotEmpty) 'Alt: ${c.altPhone}'].join('   '),
+            if (c.address.isNotEmpty) c.address,
+            if (c.email.isNotEmpty) c.email,
+          ].where((e) => e.isNotEmpty).toList()),
+        ),
+        pw.SizedBox(width: 10),
+        pw.Expanded(
+          flex: 2,
+          child: infoBox(closingWord.toUpperCase(), [
+            '${st.currencySymbol} ${_bal(s.closingBalance)}',
+            'Opening: ${_bal(s.openingBalance)}',
+            'Debit: ${_num(s.totalDebit)}   Credit: ${_num(s.totalCredit)}',
+          ], align: pw.CrossAxisAlignment.end),
+        ),
+      ]),
+      pw.SizedBox(height: 10),
+      pw.Table(
+        columnWidths: widths,
+        border: pw.TableBorder.all(color: border, width: 0.5),
+        children: tableRows,
+      ),
+      pw.SizedBox(height: 4),
+      pw.Text('Debit = goods / charges added to the account. Credit = payments, returns and adjustments. Balance = amount the customer owes; "Adv" = advance held for the customer.',
+          style: const pw.TextStyle(fontSize: 7, color: _grey)),
+      pw.SizedBox(height: 10),
+      pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+        pw.Expanded(
+          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+            pw.Text(ascii('Customer: ${c.name}'), style: pw.TextStyle(fontSize: 8.5, fontWeight: pw.FontWeight.bold)),
+            pw.Text(ascii('Invoices: ${s.invoices.length}  -  Paid: ${s.invoices.where((i) => i.state == InvoiceState.paid).length}  -  '
+                'Partly paid: ${s.invoices.where((i) => i.state == InvoiceState.partlyPaid).length}  -  Unpaid: ${s.invoices.where((i) => i.state == InvoiceState.unpaid).length}'
+                '${s.invoices.any((i) => i.state == InvoiceState.cancelled) ? '  -  Cancelled: ${s.invoices.where((i) => i.state == InvoiceState.cancelled).length}' : ''}'),
+                style: const pw.TextStyle(fontSize: 8)),
+            if (s.onAccountPayments.isPositive) ...[
+              pw.SizedBox(height: 4),
+              pw.Text(ascii('Payments received on account (not against a specific invoice): ${_num(s.onAccountPayments)}. They reduce the account balance, not a single invoice.'),
+                  style: const pw.TextStyle(fontSize: 7, color: _grey)),
+            ],
+          ]),
+        ),
+        pw.SizedBox(width: 14),
+        pw.Container(
+          width: 215,
+          padding: const pw.EdgeInsets.all(8),
+          decoration: pw.BoxDecoration(border: pw.Border.all(color: _emerald, width: 1)),
+          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+            pw.Text('STATEMENT SUMMARY', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: _emerald)),
+            pw.SizedBox(height: 4),
+            for (final r in summary)
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(vertical: 2.5),
+                decoration: r.$3 ? const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(color: PdfColors.black, width: 0.8))) : null,
+                child: pw.Row(children: [
+                  pw.Expanded(child: pw.Text(r.$1, style: pw.TextStyle(fontSize: r.$3 ? 9 : 8, fontWeight: r.$3 ? pw.FontWeight.bold : pw.FontWeight.normal))),
+                  pw.Text(r.$2, style: pw.TextStyle(fontSize: r.$3 ? 10 : 8, fontWeight: r.$3 ? pw.FontWeight.bold : pw.FontWeight.normal)),
+                ]),
+              ),
+            pw.SizedBox(height: 3),
+            pw.Text('Closing = Opening + Debit - Credit', style: const pw.TextStyle(fontSize: 6.5, color: _grey)),
+            if (s.coversToday && s.closingBalance != s.accountBalance)
+              pw.Text(ascii('Note: the account balance in the software is ${_bal(s.accountBalance)}.'), style: const pw.TextStyle(fontSize: 7, color: PdfColors.red)),
+          ]),
+        ),
+      ]),
+      pw.SizedBox(height: 12),
+      pw.Text('INVOICE STATUS', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: _emerald)),
+      pw.SizedBox(height: 4),
+      if (s.invoices.isEmpty)
+        pw.Text('No invoices in this period.', style: const pw.TextStyle(fontSize: 8, color: _grey))
+      else
+        pw.TableHelper.fromTextArray(
+          headers: ['Invoice', 'Date', 'Invoice amount', 'Returns', 'Paid against invoice', 'Due', 'Status'],
+          data: [
+            for (final i in s.invoices)
+              [i.number, _d.format(i.date), _num(i.total), i.returns.isZero ? '' : _num(i.returns), _num(i.paid), i.state == InvoiceState.cancelled ? '' : _bal(i.due), i.state.label],
+          ],
+          headerStyle: pw.TextStyle(fontSize: 7.5, fontWeight: pw.FontWeight.bold),
+          headerDecoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFE5E7EB)),
+          cellStyle: const pw.TextStyle(fontSize: 7.5),
+          cellAlignments: {2: pw.Alignment.centerRight, 3: pw.Alignment.centerRight, 4: pw.Alignment.centerRight, 5: pw.Alignment.centerRight},
+          border: pw.TableBorder.all(color: border, width: 0.5),
+          cellPadding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 2.5),
+        ),
+      pw.SizedBox(height: 12),
+      pw.Text('PRODUCT RETURNS', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: _emerald)),
+      pw.SizedBox(height: 4),
+      if (s.returns.isEmpty)
+        pw.Text('No returns in this period.', style: const pw.TextStyle(fontSize: 8, color: _grey))
+      else ...[
+        pw.TableHelper.fromTextArray(
+          headers: ['Return date', 'Return No.', 'Invoice', 'Returned product', 'Qty', 'Amount', 'Condition', 'Reason', 'Settled as'],
+          data: [
+            for (final r in s.returns)
+              [
+                _d.format(r.date),
+                r.number,
+                r.invoiceNumber,
+                '${r.productName}${r.serials.isEmpty ? '' : '\nS/N: ${r.serials.map(SerialRecord.displayOf).join(', ')}'}',
+                r.qty.format(),
+                _num(r.amount),
+                returnConditionLabel(r.condition),
+                r.reason,
+                r.refundMode == RefundMode.cash ? 'Cash refund' : 'Account credit',
+              ].map(ascii).toList(),
+          ],
+          headerStyle: pw.TextStyle(fontSize: 7.2, fontWeight: pw.FontWeight.bold),
+          headerDecoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFFFF4E0)),
+          cellStyle: const pw.TextStyle(fontSize: 7.2),
+          columnWidths: const {
+            0: pw.FixedColumnWidth(46),
+            1: pw.FixedColumnWidth(50),
+            2: pw.FixedColumnWidth(50),
+            3: pw.FlexColumnWidth(2),
+            4: pw.FixedColumnWidth(24),
+            5: pw.FixedColumnWidth(48),
+            6: pw.FixedColumnWidth(44),
+            7: pw.FlexColumnWidth(1.4),
+            8: pw.FixedColumnWidth(48),
+          },
+          cellAlignments: {4: pw.Alignment.centerRight, 5: pw.Alignment.centerRight},
+          border: pw.TableBorder.all(color: border, width: 0.5),
+          cellPadding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 2.5),
+        ),
+        pw.SizedBox(height: 3),
+        pw.Text(
+            ascii('Total returns: ${_num(s.totalReturns)} (credit). Saleable items went back to stock; faulty items are kept aside for inspection; damaged items are kept as damaged stock. '
+                'A cash refund also appears as a debit row, because the money was paid back.'),
+            style: const pw.TextStyle(fontSize: 7, color: _grey)),
+      ],
+      pw.SizedBox(height: 34),
+      pw.Row(children: [
+        pw.Expanded(child: pw.Column(children: [pw.Container(height: 0.6, color: PdfColors.black, margin: const pw.EdgeInsets.symmetric(horizontal: 30)), pw.SizedBox(height: 3), pw.Text('Customer signature', style: const pw.TextStyle(fontSize: 8))])),
+        pw.Expanded(child: pw.Column(children: [pw.Container(height: 0.6, color: PdfColors.black, margin: const pw.EdgeInsets.symmetric(horizontal: 30)), pw.SizedBox(height: 3), pw.Text('Authorised signature', style: const pw.TextStyle(fontSize: 8))])),
+      ]),
+      if (st.receiptFooter.trim().isNotEmpty) ...[
+        pw.SizedBox(height: 10),
+        pw.Center(child: pw.Text(ascii(st.receiptFooter.trim()), style: const pw.TextStyle(fontSize: 8, color: _grey))),
+      ],
+    ],
+  ));
+  return doc.save();
+}
+
+/// Builds [customerStatementPdf] on a background isolate (large histories).
+Future<Uint8List> customerStatementPdfInBackground(AppSettings st, CustomerStatement s) => Isolate.run(() => customerStatementPdf(st, s));
 
 // ───────────────────────── Labels ─────────────────────────
 

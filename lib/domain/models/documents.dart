@@ -188,6 +188,29 @@ class ReturnLine {
 
 enum RefundMode { cash, accountCredit }
 
+/// Condition of a customer-returned item and where its stock goes.
+///  resellable: Saleable, back to available stock.
+///  faulty: kept aside in the inspection queue (not sellable) for the owner
+///    to decide: repair, sell or write off.
+///  damaged: damaged stock (not sellable).
+///  inspect: not checked yet, inspection queue.
+const returnConditions = ['resellable', 'faulty', 'damaged', 'inspect'];
+
+String returnConditionLabel(String condition) => switch (condition) {
+      'faulty' => 'Faulty',
+      'damaged' => 'Damaged',
+      'inspect' => 'Needs inspection',
+      _ => 'Saleable',
+    };
+
+/// Where the returned stock went, for statements and return details.
+String returnConditionStock(String condition) => switch (condition) {
+      'faulty' => 'kept aside as faulty, awaiting inspection',
+      'damaged' => 'moved to damaged stock',
+      'inspect' => 'awaiting inspection',
+      _ => 'back to available stock',
+    };
+
 class ReturnDoc {
   final String id;
   final String number;

@@ -103,6 +103,12 @@ Every scenario ends with `IntegrityService.check()` reporting no issues.
 - `dart analyze` on Flutter 3.41.6: no issues. On Flutter 3.50: only `deprecated_member_use` infos.
 - **Not run here:** the widget tests, including the new `finance_ui_test.dart`, because the Flutter engine is unavailable in my environment. Run `bash tool/run_tests_mac.command` locally.
 
+### Customer statement (21 Nov)
+- `test/customer_statement_test.dart` (3 tests, pure Dart, passed here): demo customer with Rs 5,000 opening balance, three invoices with several products (paid / partly paid / unpaid), payments at sale, against an invoice, on account (2), a voided payment, an account-credit return and a credit adjustment. Every posting row's running balance is checked, one row per ledger entry, debit/credit totals equal the ledger, closing Rs 33,000 = customer balance = ledger balance = total receivables. Period tests (previous month, this month, custom, end-before-start rejected). PDF: A4, builds, 60 extra invoices give 8 pages.
+- Returns (21 Nov): new test in the same file. Serial cameras returned as Saleable (back to stock), Faulty (inspection queue, marked Faulty, not sellable), Damaged (damaged stock, cash refund), plus cable. Each return is one credit row; total returns Rs 18,600 = return documents; refund shown as a debit; closing Rs 4,400 = ledger. Unknown condition refused. Suite now 148/148.
+- `test/customer_statement_ui_test.dart`: widget test, runs only on the Mac (`bash tool/run_tests_mac.command`).
+- Full pure-Dart suite: 147/147 passed. `dart analyze` with Flutter 3.41.6: no issues; with 3.50: no issues other than deprecation infos.
+
 ## 3. Your local results (Mac)
 Dependency-fix run, from your `verify_logs/` on 16 Nov (read by the developer from the files on your Mac): pub get ✅, deps ✅, analyze ✅, `flutter test` ✅ **61/61 passed** (incl. `widget_test.dart` and `export_print_test.dart`), `flutter build macos --release` ✅ (`al_aqsa_cctv.app`, 52 MB). `key_versions.txt` matches section 1.
 

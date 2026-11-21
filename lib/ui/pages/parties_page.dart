@@ -9,6 +9,7 @@ import '../../domain/models/user.dart';
 import '../../domain/services/party_service.dart';
 import '../../export/tabular.dart';
 import '../../printing/pdf_docs.dart';
+import '../customer_statement_flow.dart';
 import '../print_actions.dart';
 import '../record_actions.dart';
 import '../../domain/services/whatsapp.dart';
@@ -83,6 +84,13 @@ class _PartiesPageState extends ConsumerState<PartiesPage> {
           breadcrumbs: ['${word}s'],
           actions: [
             ExportMenu(tables: () => [_table(rows, totals)]),
+            if (k == PartyKind.customer)
+              OutlinedButton.icon(
+                key: const ValueKey('print-customer-statement'),
+                onPressed: () => showCustomerStatement(context, ref),
+                icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                label: const Text('Print Customer Statement'),
+              ),
             FilledButton.icon(onPressed: () => showPartyForm(context, ref, k), icon: const Icon(Icons.add), label: Text('Add $word')),
           ],
         ),
@@ -125,6 +133,8 @@ class _PartiesPageState extends ConsumerState<PartiesPage> {
                     onEdit: can ? () => showPartyForm(context, ref, k, existing: p) : null,
                     onDelete: can && (p.active || app.ctx.can(Permission.permanentDelete)) ? () => deletePartyRecord(context, ref, p) : null,
                     extra: [
+                      if (k == PartyKind.customer)
+                        RowAction('Print Customer Statement', Icons.receipt_long_outlined, () => showCustomerStatement(context, ref, customer: p), keyName: 'row-statement'),
                       if (can && !p.active)
                         RowAction('Restore', Icons.unarchive_outlined, () => runAction(context, () => app.parties.restore(k, p.id), success: '"${p.name}" restored'), keyName: 'row-restore'),
                     ],
@@ -326,11 +336,19 @@ class _PartyDetailState extends ConsumerState<_PartyDetail> {
                   ),
                 if (user.can(Permission.manageLedgers))
                   OutlinedButton.icon(onPressed: () => _adjust(p), icon: const Icon(Icons.tune, size: 18), label: const Text('Adjustment')),
-                OutlinedButton.icon(
-                  onPressed: () => showPdf(context, app.ctx.settings, () => statementPdf(app.ctx.settings, st, from: _from, to: _to), name: 'Statement ${p.name}'),
-                  icon: const Icon(Icons.print_outlined, size: 18),
-                  label: const Text('Print Statement'),
-                ),
+                if (isC)
+                  OutlinedButton.icon(
+                    key: const ValueKey('detail-customer-statement'),
+                    onPressed: () => showCustomerStatement(context, ref, customer: p, from: _from, to: _to),
+                    icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                    label: const Text('Print Customer Statement'),
+                  )
+                else
+                  OutlinedButton.icon(
+                    onPressed: () => showPdf(context, app.ctx.settings, () => statementPdf(app.ctx.settings, st, from: _from, to: _to), name: 'Statement ${p.name}'),
+                    icon: const Icon(Icons.print_outlined, size: 18),
+                    label: const Text('Print Statement'),
+                  ),
                 OutlinedButton.icon(onPressed: () => showPartyForm(context, ref, p.kind, existing: p), icon: const Icon(Icons.edit_outlined, size: 18), label: const Text('Edit')),
               ]),
             ),
@@ -352,6 +370,13 @@ class _PartyDetailState extends ConsumerState<_PartyDetail> {
                         ),
                       ),
                       TextButton(onPressed: () => setState(() => _from = _to = null), child: const Text('All time')),
+                      if (isC)
+                        IconButton(
+                          key: const ValueKey('ledger-customer-statement'),
+                          tooltip: 'Print Customer Statement',
+                          onPressed: () => showCustomerStatement(context, ref, customer: p, from: _from, to: _to),
+                          icon: const Icon(Icons.receipt_long_outlined),
+                        ),
                     ]),
                   ),
                   Expanded(

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/money.dart';
 import '../../domain/models/party.dart';
 import '../../export/tabular.dart';
+import '../customer_statement_flow.dart';
 import '../print_actions.dart';
 import '../record_actions.dart';
 import '../../domain/models/user.dart';
@@ -101,6 +102,12 @@ class _LedgersPageState extends ConsumerState<LedgersPage> {
                             ],
                         ],
                       )]),
+              OutlinedButton.icon(
+                key: const ValueKey('ledgers-customer-statement'),
+                icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                label: const Text('Print Customer Statement'),
+                onPressed: () => showCustomerStatement(context, ref),
+              ),
               FilledButton.icon(
                 icon: const Icon(Icons.call_received, size: 18),
                 label: const Text('Receive from Customer'),

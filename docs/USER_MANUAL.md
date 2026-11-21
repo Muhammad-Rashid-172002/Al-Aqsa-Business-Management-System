@@ -103,6 +103,19 @@ Reports → pick a report → date range → **Excel / CSV / PDF**. Profit is **
 - An optional alternate number can be saved. Landlines and invalid numbers are skipped, and a clear message is shown instead of a broken link.
 - WhatsApp Desktop opens directly if it is installed; otherwise the browser opens wa.me, which hands over to WhatsApp Desktop or WhatsApp Web. An internet connection is needed for WhatsApp itself; the rest of the software stays offline.
 
+## Customer statement (A4)
+
+**Print Customer Statement** is on the Customers page (top), in each customer's ⋮ menu, in the customer window, on its Ledger tab, and on Payments & Ledgers.
+
+- Choose the period: **Complete history** (default), This month, Previous month, or a Custom date range. With a period, earlier transactions become the "balance brought forward".
+- **Print Preview** shows the A4 statement; **Print** opens the printer dialog; **Export PDF** saves the file. All three use the same PDF.
+- Every invoice is listed with its product lines (qty, unit price, total, serial numbers, discounts), then the invoice total as Debit. Payments (at sale, against an invoice, on account), returns, refunds, voided payments, cancelled invoices, repair charges and adjustments are separate rows. The Balance column is the running balance after each row.
+- Summary: Opening + Debit − Payments − Returns/adjustments = Closing outstanding balance. It always equals the customer's balance in the software (for a statement that runs to today).
+- The Invoice Status table shows each invoice as Paid, Partly paid (with the amount due) or Unpaid, counting only payments taken against that invoice. Payments taken "on account" reduce the account balance and are shown separately.
+- **Returns:** every customer return is a separate Credit row (one per return voucher), with its product lines, the condition and the reason. A **Product Returns** table lists date, return no., original invoice, product, qty, amount, condition, reason and whether it was credited to the account or refunded in cash. A cash refund also shows as a Debit row, because the money was paid back.
+- Return conditions (Returns → customer return): **Saleable** goes back to available stock; **Faulty** is kept aside in the inspection queue marked "Faulty" (not sellable until the owner decides); **Damaged** goes to damaged stock; **Needs inspection** goes to the inspection queue.
+- Urdu text in product names is not printed (the PDF font is Latin only), as in the other printouts.
+
 ## Backup & restore
 * Automatic daily backup (time and how many to keep are configurable).
 * **Backup Now** at any time.
