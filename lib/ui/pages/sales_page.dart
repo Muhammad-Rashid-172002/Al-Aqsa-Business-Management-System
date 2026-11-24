@@ -8,6 +8,8 @@ import '../../domain/models/product.dart';
 import '../../domain/models/user.dart';
 import '../../export/tabular.dart';
 import '../../printing/pdf_docs.dart';
+import '../bill_lines.dart';
+import '../edit_invoice_dialog.dart';
 import '../print_actions.dart';
 import '../record_actions.dart';
 import '../providers.dart';
@@ -54,7 +56,9 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
   Widget build(BuildContext context) {
     final c = AppTheme.of(context);
     final app = ref.watch(liveServicesProvider);
-    final rows = app.sales.list(from: _from, to: _to, status: _status, query: _q).where((s0) => !_unpaid || s0.remaining.isPositive).toList();
+    final paidBy = app.sales.paidBySale();
+    Money due(Sale s0) => s0.status == DocStatus.completed ? s0.total - (paidBy[s0.id] ?? const Money.zero()) : s0.remaining;
+    final rows = app.sales.list(from: _from, to: _to, status: _status, query: _q).where((s0) => !_unpaid || due(s0).isPositive).toList();
     final total = Money.sum(rows.where((s0) => s0.status == DocStatus.completed).map((s0) => s0.total));
     return Padding(
       padding: const EdgeInsets.all(24),
@@ -82,7 +86,7 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
           Expanded(child: Text('${rows.length} invoice(s) • ${total.format()}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: c.textMuted))),
           const SizedBox(width: 12),
           ExportMenu(tables: () => [ExportTable('Invoices', ['Invoice', 'Date', 'Customer', 'Total', 'Paid', 'Balance', 'Status'], [
-              for (final s0 in rows) [s0.number, dateFmt.format(s0.date), s0.customerName, s0.total.paisa / 100, s0.paidAtSale.paisa / 100, s0.remaining.paisa / 100, s0.status.name]
+              for (final s0 in rows) [s0.number, dateFmt.format(s0.date), s0.customerName, s0.total.paisa / 100, (s0.total - due(s0)).paisa / 100, due(s0).paisa / 100, s0.status.name]
             ])]),
         ]),
         const SizedBox(height: 12),
@@ -93,15 +97,17 @@ class _InvoicesListState extends ConsumerState<InvoicesList> {
               onRowTap: (s0) => s0.status == DocStatus.draft ? _openDraft(s0) : showInvoiceDetail(context, ref, s0.id),
               empty: const EmptyState(icon: Icons.receipt_long, title: 'No invoices', message: 'Completed sales in this period appear here.'),
               columns: [
-                AppColumn('Invoice', (s0) => Text(s0.number, style: const TextStyle(fontWeight: FontWeight.w600))),
+                AppColumn('Invoice', (s0) => Text('${s0.number}${s0.edited ? ' (edited)' : ''}', style: const TextStyle(fontWeight: FontWeight.w600))),
                 AppColumn('Date', (s0) => Text(dateTimeFmt.format(s0.date))),
                 AppColumn('Customer', flex: 3, (s0) => Text(s0.customerName)),
                 AppColumn('Total', numeric: true, (s0) => Text(s0.total.format())),
-                AppColumn('Balance', numeric: true, (s0) => Text(s0.remaining.isPositive ? s0.remaining.format() : '—', style: TextStyle(color: s0.remaining.isPositive ? c.warning : c.textMuted))),
+                AppColumn('Balance', numeric: true, (s0) => Text(due(s0).isPositive ? due(s0).format() : '—', style: TextStyle(color: due(s0).isPositive ? c.warning : c.textMuted))),
                 AppColumn('Status', (s0) => StatusPill(s0.status == DocStatus.draft ? 'held' : s0.status.name, s0.status == DocStatus.cancelled ? c.danger : (s0.status == DocStatus.draft ? c.warning : c.accent))),
 actionsColumn<Sale>((s0) => RowActionsMenu(
                     onView: s0.status == DocStatus.draft ? null : () => showInvoiceDetail(context, ref, s0.id),
-                    onEdit: s0.status == DocStatus.draft ? () => _openDraft(s0) : null,
+                    onEdit: s0.status == DocStatus.draft
+                        ? () => _openDraft(s0)
+                        : (s0.status == DocStatus.completed && app.ctx.can(Permission.editInvoices) ? () => showEditInvoice(context, ref, s0) : null),
                     onDelete: s0.status == DocStatus.draft || (s0.status == DocStatus.completed && app.ctx.can(Permission.cancelTransactions)) ? () => deleteSaleRecord(context, ref, s0) : null,
                   )),
 ],
@@ -136,7 +142,10 @@ class _InvoiceDetail extends ConsumerWidget {
     final st = app.ctx.settings;
     final returns = app.sales.returns().where((r) => r.originalId == s0.id).toList();
     final payments = app.parties.payments().where((p) => p.refId == s0.id).toList();
-    final canReturn = s0.status == DocStatus.completed && s0.items.any((e) => (e.qty - e.returnedQty).isPositive);
+    final canReturn = s0.status == DocStatus.completed && s0.items.any((e) => e.isStock && (e.qty - e.returnedQty).isPositive);
+    final paidSoFar = app.sales.paidAgainst(s0.id);
+    final dueNow = s0.total - paidSoFar;
+    final canEdit = s0.status == DocStatus.completed && user.can(Permission.editInvoices);
     return FormDialog(
       title: 'Invoice ${s0.number}',
       width: 820,
@@ -153,7 +162,11 @@ class _InvoiceDetail extends ConsumerWidget {
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: Text('${it.name}  ×  ${it.qty.format()}'),
+            title: Row(children: [
+              Flexible(child: Text('${it.name}  ×  ${it.qty.format()}${it.unit.isEmpty ? '' : ' ${it.unit}'}')),
+              const SizedBox(width: 6),
+              LineKindPill(it),
+            ]),
             subtitle: Text([
               '${it.unitPrice.format()} each',
               if (!it.discount.isZero) 'discount ${it.discount.format()}',
@@ -169,7 +182,12 @@ class _InvoiceDetail extends ConsumerWidget {
         if (!s0.invoiceDiscount.isZero) InfoRow('Bill discount', '− ${s0.invoiceDiscount.format()}'),
         InfoRow('Total', s0.total.format(), strong: true),
         InfoRow('Paid at sale (${s0.method.label})', s0.paidAtSale.format()),
-        if (s0.remaining.isPositive) InfoRow('Balance at sale', s0.remaining.format(), color: c.warning),
+        if (s0.status == DocStatus.completed) ...[
+          InfoRow('Paid against invoice (all payments)', paidSoFar.format()),
+          InfoRow(dueNow.isNegative ? 'Paid in excess (customer credit)' : 'Balance due now', (dueNow.isNegative ? -dueNow : dueNow).format(),
+              color: dueNow.isPositive ? c.warning : null),
+        ] else if (s0.remaining.isPositive)
+          InfoRow('Balance at sale', s0.remaining.format(), color: c.warning),
         if (user.can(Permission.viewFinancials) && s0.status == DocStatus.completed) InfoRow('Gross profit on invoice', (s0.total - s0.cogs).format(), color: c.accent),
         if (payments.isNotEmpty) ...[
           const Divider(),
@@ -182,6 +200,10 @@ class _InvoiceDetail extends ConsumerWidget {
           Text('Returns', style: TextStyle(fontWeight: FontWeight.w700, color: c.text)),
           for (final r in returns) InfoRow('${r.number} • ${dateFmt.format(r.date)}', r.total.format()),
         ],
+        if (s0.edited) ...[
+          const Divider(),
+          InvoiceEditHistory(s0),
+        ],
       ]),
       actions: [
         if (s0.status == DocStatus.completed && user.can(Permission.cancelTransactions))
@@ -193,16 +215,23 @@ class _InvoiceDetail extends ConsumerWidget {
             },
             child: Text('Cancel invoice', style: TextStyle(color: c.danger)),
           ),
+        if (canEdit)
+          OutlinedButton.icon(
+            key: const ValueKey('inv-edit'),
+            onPressed: () => showEditInvoice(context, ref, s0),
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            label: const Text('Edit invoice'),
+          ),
         if (canReturn) OutlinedButton.icon(onPressed: () => showSalesReturnDialog(context, ref, s0), icon: const Icon(Icons.undo, size: 18), label: const Text('Return items')),
         if (customer != null && customer.balance.isPositive && user.can(Permission.manageLedgers))
           OutlinedButton.icon(onPressed: () => showPaymentDialog(context, ref, customer), icon: const Icon(Icons.payments_outlined, size: 18), label: const Text('Receive payment')),
         OutlinedButton.icon(
-          onPressed: () => showPdf(context, st, () => invoicePdf(st, s0, customer: customer, paper: paperFromSetting(st.receiptFormat)), name: s0.number),
+          onPressed: () => showPdf(context, st, () => invoicePdf(st, s0, customer: customer, paper: paperFromSetting(st.receiptFormat), paid: paidSoFar), name: s0.number),
           icon: const Icon(Icons.receipt, size: 18),
           label: const Text('Receipt'),
         ),
         FilledButton.icon(
-          onPressed: () => showPdf(context, st, () => invoicePdf(st, s0, customer: customer), name: s0.number),
+          onPressed: () => showPdf(context, st, () => invoicePdf(st, s0, customer: customer, paid: paidSoFar), name: s0.number),
           icon: const Icon(Icons.print, size: 18),
           label: const Text('A4 Invoice'),
         ),

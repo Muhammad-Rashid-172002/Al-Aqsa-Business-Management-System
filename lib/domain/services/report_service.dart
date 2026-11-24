@@ -244,7 +244,7 @@ class ReportService {
     for (final sale in _sales(r)) {
       for (var k = 0; k < sale.items.length; k++) {
         final it = sale.items[k];
-        final row = rows.putIfAbsent(it.productId, () => ProductSalesRow(it.productId, it.name));
+        final row = rows.putIfAbsent(it.lineKey, () => ProductSalesRow(it.lineKey, it.name));
         row.qty += it.qty;
         row.revenue += sale.lineRevenue(k);
         row.cogs += it.cogs;

@@ -109,6 +109,16 @@ Every scenario ends with `IntegrityService.check()` reporting no issues.
 - `test/customer_statement_ui_test.dart`: widget test, runs only on the Mac (`bash tool/run_tests_mac.command`).
 - Full pure-Dart suite: 147/147 passed. `dart analyze` with Flutter 3.41.6: no issues; with 3.50: no issues other than deprecation infos.
 
+### Billing / invoice editing / non-stock items / return settlement (24 Nov)
+- `test/billing_edit_test.dart` (5 tests, pure Dart, passed here): 500 and 1,000 clips, installation and labour (no stock change, zero cost, ledger, reports, statement, A4 + thermal PDF, presets); editing a partly paid invoice (serial swap, quantity down, clips up, service added, discount; payments untouched, ledger adjustment, stock and serial status, cost, P&L, history, statement line changes, lowering below paid = credit); walk-in rules, staff blocked, returns block edits; cash refund with entered amount (refund in cash report) and account adjustment with no outstanding (customer credit used by the next bill), duplicate return blocked, balance after return, receipts; edited invoice + non-stock lines + presets + return still correct after a real Hive restart.
+- `test/billing_ui_test.dart`: widget tests (POS Add Item, Edit invoice) - run only on the Mac / Windows.
+- Full pure-Dart suite: 153/153 passed. `dart analyze` (Flutter 3.41.6): no issues; 3.50: deprecation infos only.
+
+### Shop contact on printouts (24 Nov)
+- `test/shop_contact_test.dart` (2 tests, passed here): defaults, old settings get the defaults, link https://wa.me/923715263580, landline gives no link, cleared fields hide the line; 7 documents (A4, thermal 80, thermal 58 invoice, payment receipt, return receipt, customer statement, account statement) build and contain the link; a chosen icon image is embedded.
+- Text check with pdftotext on the generated PDFs: "M. Osama" and "0371-5263580" found in all 7. Rendered A4, 80 mm, 58 mm and statement pages checked visually: nothing cut off.
+- Full pure-Dart suite 155/155 passed; analyze clean (3.41.6), deprecation infos only (3.50).
+
 ## 3. Your local results (Mac)
 Dependency-fix run, from your `verify_logs/` on 16 Nov (read by the developer from the files on your Mac): pub get ✅, deps ✅, analyze ✅, `flutter test` ✅ **61/61 passed** (incl. `widget_test.dart` and `export_print_test.dart`), `flutter build macos --release` ✅ (`al_aqsa_cctv.app`, 52 MB). `key_versions.txt` matches section 1.
 

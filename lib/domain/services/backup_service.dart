@@ -373,8 +373,11 @@ class BackupService {
     }
     final app = snapshot[Boxes.settings]?['app'];
     if (app != null) {
-      final v = (jsonDecode(app()) as Map)['logoPath'];
-      if (v is String && v.isNotEmpty) yield v;
+      final j = jsonDecode(app()) as Map;
+      for (final k in const ['logoPath', 'whatsappIconPath']) {
+        final v = j[k];
+        if (v is String && v.isNotEmpty) yield v;
+      }
     }
   }
 
@@ -816,8 +819,10 @@ class BackupService {
     }
     final app = data[Boxes.settings]?['app'];
     if (app != null) {
-      final v = app['logoPath'];
-      if (v is String && pathMap.containsKey(v)) app['logoPath'] = pathMap[v];
+      for (final k in const ['logoPath', 'whatsappIconPath']) {
+        final v = app[k];
+        if (v is String && pathMap.containsKey(v)) app[k] = pathMap[v];
+      }
     }
   }
 }

@@ -10,6 +10,8 @@ import '../../domain/services/party_service.dart';
 import '../../export/tabular.dart';
 import '../../printing/pdf_docs.dart';
 import '../customer_statement_flow.dart';
+import '../edit_invoice_dialog.dart';
+import 'sales_page.dart' show showInvoiceDetail;
 import '../print_actions.dart';
 import '../record_actions.dart';
 import '../../domain/services/whatsapp.dart';
@@ -385,6 +387,9 @@ class _PartyDetailState extends ConsumerState<_PartyDetail> {
                       child: AppTable<StatementLine>(
                         pageSize: 50,
                         rows: st.lines.reversed.toList(),
+                        onRowTap: (l) => (l.entry.refType == 'sale' || l.entry.refType == 'sale_edit') && app.sales.byId(l.entry.refId) != null
+                            ? showInvoiceDetail(context, ref, l.entry.refId)
+                            : null,
                         empty: const Padding(padding: EdgeInsets.all(30), child: Text('No entries in this period')),
                         columns: [
                           AppColumn('Date', (l) => Text(dateFmt.format(l.entry.at))),
@@ -393,6 +398,17 @@ class _PartyDetailState extends ConsumerState<_PartyDetail> {
                           AppColumn('Debit', numeric: true, (l) => Text(l.entry.debit.isZero ? '' : l.entry.debit.format())),
                           AppColumn('Credit', numeric: true, (l) => Text(l.entry.credit.isZero ? '' : l.entry.credit.format())),
                           AppColumn('Balance', numeric: true, (l) => Text(l.runningBalance.format(), style: const TextStyle(fontWeight: FontWeight.w600))),
+                          if (isC && app.ctx.can(Permission.editInvoices))
+                            AppColumn('', flex: 1, (l) {
+                              final sale = l.entry.refType == 'sale' ? app.sales.byId(l.entry.refId) : null;
+                              if (sale == null || sale.status != DocStatus.completed) return const SizedBox.shrink();
+                              return IconButton(
+                                key: ValueKey('ledger-edit-${sale.number}'),
+                                tooltip: 'Edit invoice ${sale.number}',
+                                onPressed: () => showEditInvoice(context, ref, sale),
+                                icon: const Icon(Icons.edit_outlined, size: 18),
+                              );
+                            }),
                         ],
                       ),
                     ),

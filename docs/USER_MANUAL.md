@@ -103,6 +103,38 @@ Reports → pick a report → date range → **Excel / CSV / PDF**. Profit is **
 - An optional alternate number can be saved. Landlines and invalid numbers are skipped, and a clear message is shown instead of a broken link.
 - WhatsApp Desktop opens directly if it is installed; otherwise the browser opens wa.me, which hands over to WhatsApp Desktop or WhatsApp Web. An internet connection is needed for WhatsApp itself; the rest of the software stays offline.
 
+## Shop contact on printouts
+
+- Every customer document (A4 and thermal invoices, payment receipts, return receipts / credit notes, customer and account statements, quotations, repair receipts, PDF exports) shows **Contact: M. Osama** with a green WhatsApp badge and **0371-5263580** under the shop name. On customer statements it is also in every page footer.
+- In a PDF the badge and number are a link to https://wa.me/923715263580 (opens WhatsApp in readers that support links).
+- Change the name or number in **Settings → Business** (Contact person / Contact WhatsApp number). Clear both to hide the line.
+- **Settings → Choose WhatsApp icon** puts an icon image of your choice (for example the official WhatsApp icon file from WhatsApp's brand resources) in place of the built-in green phone badge.
+
+## Non-stock items and services (POS)
+
+- In the bill, press **Add Item (product, non-stock, service)** and choose:
+  - **Stock product**: the usual product from stock.
+  - **Non-stock item**: clips, screws, small accessories. Type the description, quantity (e.g. 500 or 1000), unit (pcs) and unit price; the total is calculated. No product record is needed and stock is not touched.
+  - **Service / labour**: CCTV / camera / solar installation, labour (mazdoori), repair service or any service, with quantity, unit (job, day, hour) and rate. Services count as sales revenue and never touch stock.
+- Tick **Save for quick billing next time** to keep the item as a preset; presets appear as chips the next time (the x on a chip removes it).
+- Click a line to change it, or x to remove it, before completing the bill. These lines print on A4 and thermal invoices and appear in the customer ledger and statement.
+
+## Editing a completed invoice (owner)
+
+- Open the invoice (Sales → Invoices, the ⋮ menu → Edit, or the customer's Ledger tab → pencil on a sale) and press **Edit invoice**.
+- Change products and quantities, serial numbers, prices, discounts, non-stock items and services, notes. A reason is required.
+- The invoice keeps its number and date. Payments are never deleted or duplicated: the summary shows what was already paid against the invoice and the new balance. For a customer, the difference is posted to the ledger as a separate "Invoice edited" entry; if the new total is lower than what was paid, the excess stays as customer credit. A walk-in invoice must stay fully paid: receive the extra amount in the edit window, or the difference is paid back as a cash refund.
+- Stock follows the change: removed units go back to stock at their own cost, added units are taken from stock. Removed serial numbers return to In stock; added ones become Sold on this invoice.
+- Profit & loss uses the edited lines and costs.
+- The invoice window shows the **Edit history** (date and time, who, reason, old and new lines and totals). Invoices with returns or technician-installed material cannot be edited.
+
+## Customer returns: settlement
+
+- **Cash refund**: enter the refund amount (or leave empty for the full price). The money is recorded as paid out (cash reports and payments), the customer ledger shows the return credit and the refund, and a **Return Receipt** opens for printing.
+- **Adjust in customer account**: the return amount is credited to the customer. It reduces what they owe; if they owe nothing it stays as customer credit and is used by the next bills. No cash is paid. A **Credit Note** opens for printing.
+- The amount can be lower than the price charged (for example a deduction for a damaged item), never higher.
+- Returns history shows the invoice, return number, products, quantities, amount, settlement, date and the customer balance after the return. The same serial number or quantity cannot be returned twice.
+
 ## Customer statement (A4)
 
 **Print Customer Statement** is on the Customers page (top), in each customer's ⋮ menu, in the customer window, on its Ledger tab, and on Payments & Ledgers.

@@ -14,6 +14,7 @@ import '../domain/models/party.dart';
 import '../domain/models/product.dart';
 import '../domain/services/customer_statement.dart';
 import '../domain/services/party_service.dart';
+import '../domain/services/whatsapp.dart' show normalizeWhatsAppNumber;
 import '../export/tabular.dart';
 
 /// Paper formats used by the shop.
@@ -55,6 +56,56 @@ class PdfHelper {
     }
   }
 
+  /// wa.me link for the shop contact number, or null if it is not a
+  /// valid mobile number.
+  String? get waLink {
+    final n = normalizeWhatsAppNumber(st.contactPhone);
+    return n == null ? null : 'https://wa.me/$n';
+  }
+
+  static const _waGreen = PdfColor.fromInt(0xFF25D366);
+  // A plain phone handset (Material "call" glyph), white on a green circle,
+  // used when no WhatsApp icon image has been chosen in Settings.
+  static const _handset =
+      'M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z';
+
+  pw.Widget waIcon(double size) {
+    final path = st.whatsappIconPath;
+    if (path != null && path.isNotEmpty) {
+      try {
+        final f = File(path);
+        if (f.existsSync()) return pw.SizedBox(width: size, height: size, child: pw.Image(pw.MemoryImage(f.readAsBytesSync())));
+      } catch (_) {}
+    }
+    return pw.Container(
+      width: size,
+      height: size,
+      padding: pw.EdgeInsets.all(size * 0.2),
+      decoration: const pw.BoxDecoration(color: _waGreen, shape: pw.BoxShape.circle),
+      child: pw.SvgImage(svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#FFFFFF" d="$_handset"/></svg>'),
+    );
+  }
+
+  bool get hasContact => st.contactPerson.trim().isNotEmpty || st.contactPhone.trim().isNotEmpty;
+
+  /// "Contact: M. Osama  (icon) 0371-5263580"; the icon and number open
+  /// WhatsApp in PDF readers that support links.
+  pw.Widget contactLine({double fontSize = 9.5, pw.MainAxisAlignment align = pw.MainAxisAlignment.start}) {
+    final person = st.contactPerson.trim();
+    final phone = st.contactPhone.trim();
+    final link = waLink;
+    final number = pw.Row(mainAxisSize: pw.MainAxisSize.min, children: [
+      waIcon(fontSize + 3),
+      pw.SizedBox(width: 3),
+      pw.Text(ascii(phone), style: pw.TextStyle(fontSize: fontSize, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF128C7E))),
+    ]);
+    return pw.Row(mainAxisAlignment: align, mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
+      if (person.isNotEmpty) pw.Text(ascii('Contact: $person'), style: pw.TextStyle(fontSize: fontSize, fontWeight: pw.FontWeight.bold)),
+      if (person.isNotEmpty && phone.isNotEmpty) pw.SizedBox(width: 8),
+      if (phone.isNotEmpty) link == null ? number : pw.UrlLink(destination: link, child: number),
+    ]);
+  }
+
   pw.Widget header(String docTitle, List<(String, String)> meta) {
     final lg = logo;
     return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
@@ -66,6 +117,7 @@ class PdfHelper {
             if (st.address.isNotEmpty) pw.Text(ascii(st.address), style: const pw.TextStyle(fontSize: 9, color: _grey)),
             if (st.phone.isNotEmpty || st.email.isNotEmpty)
               pw.Text(ascii([if (st.phone.isNotEmpty) 'Phone: ${st.phone}', if (st.email.isNotEmpty) st.email].join('   ')), style: const pw.TextStyle(fontSize: 9, color: _grey)),
+            if (hasContact) pw.Padding(padding: const pw.EdgeInsets.only(top: 3), child: contactLine()),
           ]),
         ),
         pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.end, children: [
@@ -121,11 +173,21 @@ String _serialLine(List<String> keys) => keys.isEmpty ? '' : '\nS/N: ${keys.map(
 
 // ───────────────────────── Sales invoice / receipt ─────────────────────────
 
-Future<Uint8List> invoicePdf(AppSettings st, Sale sale, {Party? customer, PaperKind paper = PaperKind.a4, String cashier = ''}) async {
-  if (paper != PaperKind.a4) return _thermalInvoice(st, sale, paper, cashier: cashier);
+/// Item name for a bill line, marking non-stock items and services.
+String _lineName(SaleItem it) => switch (it.kind) {
+      SaleLineKind.product => it.name,
+      SaleLineKind.nonStock => '${it.name}${it.unit.isEmpty ? '' : ' (${it.unit})'}',
+      SaleLineKind.service => '${it.name} [Service${it.unit.isEmpty ? '' : ', ${it.unit}'}]',
+    };
+
+/// [paid] is what has been paid against the invoice so far (all payments,
+/// not only at the counter); defaults to the amount paid at sale.
+Future<Uint8List> invoicePdf(AppSettings st, Sale sale, {Party? customer, PaperKind paper = PaperKind.a4, String cashier = '', Money? paid}) async {
+  if (paper != PaperKind.a4) return _thermalInvoice(st, sale, paper, cashier: cashier, paid: paid);
   final h = PdfHelper(st);
   final doc = pw.Document(title: sale.number, author: st.businessName);
-  final remaining = sale.remaining;
+  final paidSoFar = paid ?? sale.paidAtSale;
+  final remaining = sale.total - paidSoFar;
   doc.addPage(pw.MultiPage(
     pageFormat: PdfPageFormat.a4,
     margin: const pw.EdgeInsets.all(32),
@@ -133,6 +195,7 @@ Future<Uint8List> invoicePdf(AppSettings st, Sale sale, {Party? customer, PaperK
       h.header(sale.status == DocStatus.cancelled ? 'Invoice (CANCELLED)' : 'Invoice', [
         ('Invoice No', sale.number),
         ('Date', _dt.format(sale.date)),
+        if (sale.edited) ('Revised', _dt.format(sale.edits.last.at)),
         if (cashier.isNotEmpty) ('Served by', cashier),
       ]),
       pw.Text('Bill To', style: const pw.TextStyle(fontSize: 9, color: _grey)),
@@ -146,7 +209,7 @@ Future<Uint8List> invoicePdf(AppSettings st, Sale sale, {Party? customer, PaperK
           for (var k = 0; k < sale.items.length; k++)
             [
               '${k + 1}',
-              '${sale.items[k].name}${_serialLine(sale.items[k].serials)}',
+              '${_lineName(sale.items[k])}${_serialLine(sale.items[k].serials)}',
               sale.items[k].qty.format(),
               money(sale.items[k].unitPrice, st),
               sale.items[k].discount.isZero ? '-' : money(sale.items[k].discount, st),
@@ -161,8 +224,8 @@ Future<Uint8List> invoicePdf(AppSettings st, Sale sale, {Party? customer, PaperK
         if (!sale.lineDiscounts.isZero) ('Line discounts', '- ${money(sale.lineDiscounts, st)}', false),
         if (!sale.invoiceDiscount.isZero) ('Invoice discount', '- ${money(sale.invoiceDiscount, st)}', false),
         ('Grand Total', money(sale.total, st), true),
-        ('Paid (${sale.method.label})', money(sale.paidAtSale, st), false),
-        ('Balance Due', money(remaining, st), remaining.isPositive),
+        (paid == null ? 'Paid (${sale.method.label})' : 'Paid to date', money(paidSoFar, st), false),
+        (remaining.isNegative ? 'Paid in excess (credit)' : 'Balance Due', money(remaining.isNegative ? -remaining : remaining, st), remaining.isPositive),
       ]),
       if (sale.notes.isNotEmpty) pw.Padding(padding: const pw.EdgeInsets.only(top: 12), child: pw.Text(ascii('Notes: ${sale.notes}'), style: const pw.TextStyle(fontSize: 9))),
       h.footer(st.receiptFooter),
@@ -171,7 +234,9 @@ Future<Uint8List> invoicePdf(AppSettings st, Sale sale, {Party? customer, PaperK
   return doc.save();
 }
 
-Future<Uint8List> _thermalInvoice(AppSettings st, Sale sale, PaperKind paper, {String cashier = ''}) async {
+Future<Uint8List> _thermalInvoice(AppSettings st, Sale sale, PaperKind paper, {String cashier = '', Money? paid}) async {
+  final paidSoFar = paid ?? sale.paidAtSale;
+  final remaining = sale.total - paidSoFar;
   final width = paper == PaperKind.thermal58 ? 58.0 : 80.0;
   final fs = paper == PaperKind.thermal58 ? 7.5 : 8.5;
   final doc = pw.Document(title: sale.number);
@@ -185,15 +250,18 @@ Future<Uint8List> _thermalInvoice(AppSettings st, Sale sale, PaperKind paper, {S
       pw.Text(ascii(st.businessName), textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: fs + 4, fontWeight: pw.FontWeight.bold)),
       if (st.address.isNotEmpty) pw.Text(ascii(st.address), textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: fs - 1)),
       if (st.phone.isNotEmpty) pw.Text(ascii(st.phone), textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: fs - 1)),
+      if (PdfHelper(st).hasContact)
+        pw.Padding(padding: const pw.EdgeInsets.only(top: 2), child: pw.Center(child: PdfHelper(st).contactLine(fontSize: fs, align: pw.MainAxisAlignment.center))),
       pw.Divider(borderStyle: pw.BorderStyle.dashed),
       row('Invoice', sale.number, bold: true),
       row('Date', _dt.format(sale.date)),
+      if (sale.edited) row('Revised', _dt.format(sale.edits.last.at)),
       row('Customer', sale.customerName),
       if (cashier.isNotEmpty) row('Cashier', cashier),
       if (sale.status == DocStatus.cancelled) pw.Text('*** CANCELLED ***', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: fs + 1, fontWeight: pw.FontWeight.bold)),
       pw.Divider(borderStyle: pw.BorderStyle.dashed),
       for (final it in sale.items) ...[
-        pw.Text(ascii(it.name), style: pw.TextStyle(fontSize: fs, fontWeight: pw.FontWeight.bold)),
+        pw.Text(ascii(_lineName(it)), style: pw.TextStyle(fontSize: fs, fontWeight: pw.FontWeight.bold)),
         row('  ${it.qty.format()} x ${money(it.unitPrice, st)}${it.discount.isZero ? '' : ' - ${money(it.discount, st)}'}', money(it.net, st)),
         if (it.serials.isNotEmpty) pw.Text(ascii('  S/N: ${it.serials.map(SerialRecord.displayOf).join(', ')}'), style: pw.TextStyle(fontSize: fs - 1)),
       ],
@@ -201,8 +269,8 @@ Future<Uint8List> _thermalInvoice(AppSettings st, Sale sale, PaperKind paper, {S
       row('Subtotal', money(sale.subtotal - sale.lineDiscounts, st)),
       if (!sale.invoiceDiscount.isZero) row('Discount', '- ${money(sale.invoiceDiscount, st)}'),
       row('TOTAL', money(sale.total, st), bold: true),
-      row('Paid (${sale.method.label})', money(sale.paidAtSale, st)),
-      if (sale.remaining.isPositive) row('Balance due', money(sale.remaining, st), bold: true),
+      row(paid == null ? 'Paid (${sale.method.label})' : 'Paid to date', money(paidSoFar, st)),
+      if (remaining.isPositive) row('Balance due', money(remaining, st), bold: true),
       pw.Divider(borderStyle: pw.BorderStyle.dashed),
       pw.Text(ascii(st.receiptFooter), textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: fs - 0.5)),
       pw.SizedBox(height: 8),
@@ -330,6 +398,65 @@ Future<Uint8List> paymentReceiptPdf(AppSettings st, Payment pay, {Party? party, 
         pw.Text(ascii(st.businessName), style: const pw.TextStyle(fontSize: 9, color: _grey)),
       ]),
     ]),
+  ));
+  return doc.save();
+}
+
+// ───────────────────────── Return receipt / credit note ─────────────────────────
+
+/// Receipt for a customer return: a cash refund receipt, or a credit note
+/// when the amount was adjusted in the customer's account.
+Future<Uint8List> returnReceiptPdf(AppSettings st, ReturnDoc r, {Party? customer, Money? balanceAfter}) async {
+  final h = PdfHelper(st);
+  final cash = r.refundMode == RefundMode.cash;
+  final doc = pw.Document(title: r.number);
+  doc.addPage(pw.MultiPage(
+    pageFormat: PdfPageFormat.a5,
+    margin: const pw.EdgeInsets.all(24),
+    build: (_) => [
+      h.header(cash ? 'Return Receipt - Cash Refund' : 'Credit Note - Account Adjustment', [
+        ('Return No', r.number),
+        ('Date', _dt.format(r.date)),
+        ('Invoice', r.originalNumber),
+      ]),
+      pw.Text('Customer', style: const pw.TextStyle(fontSize: 9, color: _grey)),
+      pw.Text(ascii(customer?.name ?? 'Walk-in Customer'), style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+      if (customer != null && customer.phone.isNotEmpty) pw.Text(ascii(customer.phone), style: const pw.TextStyle(fontSize: 9)),
+      pw.SizedBox(height: 10),
+      h.table(
+        ['Returned product', 'Qty', 'Condition', 'Amount'],
+        [
+          for (final l in r.lines)
+            [
+              '${l.name}${_serialLine(l.serials)}',
+              l.qty.format(),
+              returnConditionLabel(l.condition),
+              money(l.amount, st),
+            ]
+        ],
+        align: {1: pw.Alignment.centerRight, 3: pw.Alignment.centerRight},
+        widths: {0: const pw.FlexColumnWidth(4), 1: const pw.FlexColumnWidth(1), 2: const pw.FlexColumnWidth(1.6), 3: const pw.FlexColumnWidth(1.8)},
+      ),
+      h.totals([
+        (cash ? 'Cash refunded (${r.method.label})' : 'Credited to customer account', money(r.total, st), true),
+      ]),
+      pw.SizedBox(height: 6),
+      pw.Text(ascii('Reason: ${r.reason}'), style: const pw.TextStyle(fontSize: 9)),
+      if (balanceAfter != null)
+        pw.Padding(
+          padding: const pw.EdgeInsets.only(top: 4),
+          child: pw.Text(
+              ascii(balanceAfter.isNegative
+                  ? 'Customer credit after this return: ${money(-balanceAfter, st)} (adjusted against future invoices)'
+                  : 'Customer balance after this return: ${money(balanceAfter, st)}'),
+              style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
+        ),
+      pw.SizedBox(height: 30),
+      pw.Row(children: [
+        pw.Expanded(child: pw.Text('Customer signature: ________________', style: const pw.TextStyle(fontSize: 9))),
+        pw.Text('Authorised: ________________', style: const pw.TextStyle(fontSize: 9)),
+      ]),
+    ],
   ));
   return doc.save();
 }
@@ -478,6 +605,7 @@ Future<Uint8List> customerStatementPdf(AppSettings st, CustomerStatement s) asyn
         StmtRowKind.payment => const PdfColor.fromInt(0xFFE7F5EC),
         StmtRowKind.returnTotal || StmtRowKind.invoiceCancel || StmtRowKind.adjustment => const PdfColor.fromInt(0xFFFFF4E0),
         StmtRowKind.refund || StmtRowKind.paymentVoid => const PdfColor.fromInt(0xFFFDECEC),
+        StmtRowKind.invoiceEdit => const PdfColor.fromInt(0xFFE8F0FE),
         _ => null,
       };
 
@@ -590,6 +718,7 @@ Future<Uint8List> customerStatementPdf(AppSettings st, CustomerStatement s) asyn
       decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(color: _line, width: 0.6))),
       child: pw.Row(children: [
         pw.Expanded(child: pw.Text(ascii('Generated ${_dt.format(s.generatedAt)} - ${st.businessName}'), style: const pw.TextStyle(fontSize: 7.5, color: _grey))),
+        if (h.hasContact) ...[h.contactLine(fontSize: 7.5), pw.SizedBox(width: 12)],
         pw.Text('Page ${ctx.pageNumber} of ${ctx.pagesCount}', style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold)),
       ]),
     ),

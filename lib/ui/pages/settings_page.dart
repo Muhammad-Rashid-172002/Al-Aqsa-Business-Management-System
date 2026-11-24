@@ -29,6 +29,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   late final _addr = TextEditingController(text: _s.address);
   late final _phone = TextEditingController(text: _s.phone);
   late final _email = TextEditingController(text: _s.email);
+  late final _contactPerson = TextEditingController(text: _s.contactPerson);
+  late final _contactPhone = TextEditingController(text: _s.contactPhone);
   late final _footer = TextEditingController(text: _s.receiptFooter);
   late final _inv = TextEditingController(text: _s.invoicePrefix);
   late final _quo = TextEditingController(text: _s.quotationPrefix);
@@ -59,6 +61,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     _addr.dispose();
     _phone.dispose();
     _email.dispose();
+    _contactPerson.dispose();
+    _contactPhone.dispose();
     _footer.dispose();
     _inv.dispose();
     _quo.dispose();
@@ -80,6 +84,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       'address': _addr.text.trim(),
       'phone': _phone.text.trim(),
       'email': _email.text.trim(),
+      'contactPerson': _contactPerson.text.trim(),
+      'contactPhone': _contactPhone.text.trim(),
       'receiptFooter': _footer.text.trim(),
       'invoicePrefix': _inv.text.trim().toUpperCase(),
       'quotationPrefix': _quo.text.trim().toUpperCase(),
@@ -170,6 +176,46 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             LabeledField('Address', _addr),
                             LabeledField('Email', _email),
                           ]),
+                          FieldRow([
+                            LabeledField('Contact person (on invoices)', _contactPerson, key: const ValueKey('set-contact-person')),
+                            LabeledField('Contact / WhatsApp number (on invoices)', _contactPhone, key: const ValueKey('set-contact-phone')),
+                          ]),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'WhatsApp icon on printouts: ${(_s.whatsappIconPath ?? '').isEmpty ? 'green phone badge (no image chosen)' : _s.whatsappIconPath}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: c.textMuted),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                key: const ValueKey('set-wa-icon'),
+                                icon: const Icon(Icons.image_outlined, size: 18),
+                                label: const Text('Choose WhatsApp icon'),
+                                onPressed: () async {
+                                  final path = await browseFiles(
+                                    context,
+                                    mode: BrowseMode.openFile,
+                                    title: 'WhatsApp icon image (PNG/JPG)',
+                                    extensions: const ['.png', '.jpg', '.jpeg'],
+                                  );
+                                  if (path != null) {
+                                    final saved = await ref.read(servicesProvider).importMedia(path, folder: 'branding');
+                                    await _save({'whatsappIconPath': saved});
+                                  }
+                                },
+                              ),
+                              if ((_s.whatsappIconPath ?? '').isNotEmpty)
+                                TextButton(
+                                  onPressed: () => _save({'whatsappIconPath': null}),
+                                  child: const Text('Remove'),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
                           Row(
                             children: [
                               Expanded(

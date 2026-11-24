@@ -13,6 +13,7 @@ import '../../domain/models/user.dart';
 import '../../domain/services/app_services.dart';
 import '../../domain/services/auth_service.dart';
 import '../../printing/pdf_docs.dart';
+import '../bill_lines.dart';
 import '../print_actions.dart';
 import '../providers.dart';
 import '../theme.dart';
@@ -372,8 +373,33 @@ class _PosPageState extends ConsumerState<PosPage> {
     _set(draft.copyWith(items: items));
   }
 
+  /// "+ Add Item": a stock product, a non-stock item or a service.
+  Future<void> _addItem() async {
+    final kind = await chooseLineKind(context);
+    if (kind == null || !mounted) return;
+    if (kind == SaleLineKind.product) {
+      final p = await pickFromList<Product>(
+        context,
+        title: 'Add stock product',
+        items: app.catalog.products(),
+        label: (x) => x.name,
+        subtitle: (x) => '${x.sellingPrice.format()}  •  in stock ${x.stockQty.format()} ${x.unit}',
+      );
+      if (p != null && mounted) await _addProduct(p);
+      return;
+    }
+    final line = await showCustomLineDialog(context, ref, kind: kind);
+    if (line == null || !mounted) return;
+    _set(draft.copyWith(items: [...draft.items, line]));
+  }
+
   Future<void> _editLine(int i) async {
     final it = draft.items[i];
+    if (!it.isStock) {
+      final line = await showCustomLineDialog(context, ref, kind: it.kind, existing: it);
+      if (line != null && mounted) _updateLine(i, line);
+      return;
+    }
     final p = app.catalog.byId(it.productId);
     final qty = TextEditingController(text: it.qty.format());
     final price = TextEditingController(text: it.unitPrice.toDecimalString());
@@ -942,6 +968,18 @@ class _PosPageState extends ConsumerState<PosPage> {
                                               ),
                                         ),
                                   );
+                          final addItem = Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton.icon(
+                                key: const ValueKey('pos-add-item'),
+                                onPressed: _addItem,
+                                icon: const Icon(Icons.add, size: 18),
+                                label: const Text('Add Item (product, non-stock, service)'),
+                              ),
+                            ),
+                          );
                           final top = <Widget>[
                             Row(
                               children: [
@@ -1328,6 +1366,7 @@ class _PosPageState extends ConsumerState<PosPage> {
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   ...top,
+                                  addItem,
                                   SizedBox(height: 180, child: cart),
                                   ...bottom,
                                 ],
@@ -1338,6 +1377,7 @@ class _PosPageState extends ConsumerState<PosPage> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               ...top,
+                              addItem,
                               Expanded(child: cart),
                               ...bottom,
                             ],
@@ -1429,8 +1469,8 @@ class _CartLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = AppTheme.of(context);
-    final fixed =
-        product == null || product!.requiresSerial || item.techUsageId != null;
+    final fixed = item.isStock &&
+        (product == null || product!.requiresSerial || item.techUsageId != null);
     final step = const Qty.one();
     return InkWell(
       onTap: onEdit,
@@ -1443,15 +1483,25 @@ class _CartLine extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    item.name,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: c.text,
-                    ),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          item.name,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: c.text,
+                          ),
+                        ),
+                      ),
+                      if (!item.isStock) ...[
+                        const SizedBox(width: 6),
+                        LineKindPill(item),
+                      ],
+                    ],
                   ),
                   Text(
-                    '${item.unitPrice.format()} × ${item.qty.format()} ${product?.unit ?? ''}${item.discount.isZero ? '' : '  − ${item.discount.format()}'}',
+                    '${item.unitPrice.format()} × ${item.qty.format()} ${item.isStock ? (product?.unit ?? '') : item.unit}${item.discount.isZero ? '' : '  − ${item.discount.format()}'}',
                     style: TextStyle(fontSize: 12, color: c.textMuted),
                   ),
                   if (item.serials.isNotEmpty)

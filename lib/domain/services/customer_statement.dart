@@ -33,6 +33,8 @@ enum StmtRowKind {
   refund,
   paymentVoid,
   invoiceCancel,
+  invoiceEdit,
+  editItem,
   returnItem,
   returnTotal,
   repairItem,
@@ -258,6 +260,81 @@ class CustomerStatementService {
 
     String serialText(List<String> keys) => keys.isEmpty ? '' : '\nS/N: ${keys.map(SerialRecord.displayOf).join(', ')}';
 
+    String lineText(SaleItem it) {
+      final disc = it.discount.isPositive ? '\nLess item discount ${_amt(it.discount)}' : '';
+      final tag = switch (it.kind) {
+        SaleLineKind.product => '',
+        SaleLineKind.nonStock => ' (non-stock item${it.unit.isEmpty ? '' : ', ${it.unit}'})',
+        SaleLineKind.service => ' (service${it.unit.isEmpty ? '' : ', ${it.unit}'})',
+      };
+      final name = it.isStock ? productDetail(it.productId, it.name) : it.name;
+      return '$name$tag${serialText(it.serials)}$disc';
+    }
+
+    /// What one edit changed, line by line; the totals add up to the change
+    /// in the invoice total.
+    List<StmtRow> editRows(Sale s, SaleEdit ed, DateTime at) {
+      final out = <StmtRow>[];
+      final before = <String, List<SaleItem>>{};
+      final after = <String, List<SaleItem>>{};
+      for (final it in ed.beforeItems) {
+        (before[it.lineKey] ??= []).add(it);
+      }
+      for (final it in ed.afterItems) {
+        (after[it.lineKey] ??= []).add(it);
+      }
+      for (final key in {...before.keys, ...after.keys}) {
+        final b = before[key] ?? const <SaleItem>[];
+        final a = after[key] ?? const <SaleItem>[];
+        final bQty = Qty.sum(b.map((e) => e.qty));
+        final aQty = Qty.sum(a.map((e) => e.qty));
+        final bNet = Money.sum(b.map((e) => e.net));
+        final aNet = Money.sum(a.map((e) => e.net));
+        final bSer = b.expand((e) => e.serials).toList();
+        final aSer = a.expand((e) => e.serials).toList();
+        if (bQty == aQty && bNet == aNet && bSer.toSet().containsAll(aSer) && aSer.toSet().containsAll(bSer)) continue;
+        final ref = (a.isNotEmpty ? a : b).first;
+        String label;
+        if (b.isEmpty) {
+          label = 'Added: ${lineText(ref)}';
+        } else if (a.isEmpty) {
+          label = 'Removed: ${lineText(ref)}';
+        } else {
+          final parts = <String>[
+            if (bQty != aQty) 'qty ${bQty.format()} to ${aQty.format()}',
+            if (b.first.unitPrice != a.first.unitPrice) 'rate ${_amt(b.first.unitPrice)} to ${_amt(a.first.unitPrice)}',
+            if (Money.sum(b.map((e) => e.discount)) != Money.sum(a.map((e) => e.discount)))
+              'discount ${_amt(Money.sum(b.map((e) => e.discount)))} to ${_amt(Money.sum(a.map((e) => e.discount)))}',
+          ];
+          final removed = bSer.where((k) => !aSer.contains(k)).toList();
+          final added = aSer.where((k) => !bSer.contains(k)).toList();
+          label = 'Changed: ${a.first.isStock ? productDetail(a.first.productId, a.first.name) : a.first.name}'
+              '${parts.isEmpty ? '' : ' (${parts.join(', ')})'}'
+              '${removed.isEmpty ? '' : '\nS/N removed: ${removed.map(SerialRecord.displayOf).join(', ')}'}'
+              '${added.isEmpty ? '' : '\nS/N added: ${added.map(SerialRecord.displayOf).join(', ')}'}';
+        }
+        out.add(StmtRow(
+          kind: StmtRowKind.editItem,
+          date: at,
+          voucher: s.number,
+          description: label,
+          qty: a.isEmpty ? bQty : aQty,
+          unitPrice: (a.isEmpty ? b : a).first.unitPrice,
+          totalPrice: aNet - bNet,
+        ));
+      }
+      if (ed.beforeDiscount != ed.afterDiscount) {
+        out.add(StmtRow(
+          kind: StmtRowKind.editItem,
+          date: at,
+          voucher: s.number,
+          description: 'Invoice discount ${_amt(ed.beforeDiscount)} to ${_amt(ed.afterDiscount)}',
+          totalPrice: ed.beforeDiscount - ed.afterDiscount,
+        ));
+      }
+      return out;
+    }
+
     for (final e in entries) {
       if (after(e.at) || before(e.at) || e.type == LedgerType.opening) continue;
       running += e.balanceEffect;
@@ -287,22 +364,49 @@ class CustomerStatementService {
             break;
           }
           invoiceIds.add(s.id);
-          for (final it in s.items) {
-            final disc = it.discount.isPositive ? '\nLess item discount ${_amt(it.discount)}' : '';
+          // The invoice as it was billed; later edits follow as their own rows.
+          final billed = s.edits.isEmpty ? s.items : s.edits.first.beforeItems;
+          final billedDisc = s.edits.isEmpty ? s.invoiceDiscount : s.edits.first.beforeDiscount;
+          for (final it in billed) {
             rows.add(StmtRow(
               kind: StmtRowKind.saleItem,
               date: e.at,
               voucher: s.number,
-              description: '${productDetail(it.productId, it.name)}${serialText(it.serials)}$disc',
+              description: lineText(it),
               qty: it.qty,
               unitPrice: it.unitPrice,
               totalPrice: it.net,
             ));
           }
-          if (s.invoiceDiscount.isPositive) {
-            rows.add(StmtRow(kind: StmtRowKind.invoiceDiscount, date: e.at, voucher: s.number, description: 'Less: invoice discount', totalPrice: -s.invoiceDiscount));
+          if (billedDisc.isPositive) {
+            rows.add(StmtRow(kind: StmtRowKind.invoiceDiscount, date: e.at, voucher: s.number, description: 'Less: invoice discount', totalPrice: -billedDisc));
           }
-          rows.add(post(StmtRowKind.invoiceTotal, 'Invoice total (${s.items.length} item${s.items.length == 1 ? '' : 's'})', totalPrice: s.total));
+          rows.add(post(StmtRowKind.invoiceTotal, 'Invoice total (${billed.length} item${billed.length == 1 ? '' : 's'})${s.edited ? ' - edited later' : ''}',
+              totalPrice: e.debit));
+          // Edits that did not change the total have no ledger entry: note them here.
+          for (final ed in s.edits.where((x) => x.difference.isZero)) {
+            rows.addAll(editRows(s, ed, ed.at));
+            rows.add(StmtRow(
+                kind: StmtRowKind.editItem,
+                date: ed.at,
+                voucher: s.number,
+                description: 'Invoice edited on ${_dmy(ed.at)} (total unchanged)${ed.reason.isEmpty ? '' : '\nReason: ${ed.reason}'}'));
+          }
+        case 'sale_edit':
+          final s = sales[e.refId];
+          SaleEdit? ed;
+          if (s != null) {
+            for (final x in s.edits) {
+              if (x.at == e.at && !x.difference.isZero) ed = x;
+            }
+          }
+          if (s != null && ed != null) rows.addAll(editRows(s, ed, e.at));
+          rows.add(post(
+              StmtRowKind.invoiceEdit,
+              ed == null
+                  ? 'Invoice ${e.refNumber} edited${_reason(e.note, '')}'
+                  : 'Invoice ${e.refNumber} edited: total ${_amt(ed.beforeTotal)} to ${_amt(ed.afterTotal)}${ed.reason.isEmpty ? '' : '\nReason: ${ed.reason}'}',
+              totalPrice: ed?.difference));
         case 'payment':
           final p = payments[e.refId];
           final voided = p != null && p.voided ? ' (voided later)' : '';

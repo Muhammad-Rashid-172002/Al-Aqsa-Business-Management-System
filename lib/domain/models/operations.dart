@@ -445,6 +445,10 @@ class AppSettings {
   final int scannerKeyGapMs;
   final int scannerMinLength;
   final int scannerDuplicateMs; // 0 = off
+  // Shop contact shown on every customer document, with a WhatsApp link.
+  final String contactPerson;
+  final String contactPhone;
+  final String? whatsappIconPath; // optional icon image (e.g. the official WhatsApp icon file)
 
   const AppSettings({
     this.businessName = 'AL-AQSA CCTV & SOLAR SYSTEM',
@@ -480,6 +484,9 @@ class AppSettings {
     this.scannerKeyGapMs = 40,
     this.scannerMinLength = 4,
     this.scannerDuplicateMs = 700,
+    this.contactPerson = 'M. Osama',
+    this.contactPhone = '0371-5263580',
+    this.whatsappIconPath,
   });
 
   ScannerConfig get scanner => ScannerConfig(
@@ -523,6 +530,9 @@ class AppSettings {
         'scannerKeyGapMs': scannerKeyGapMs,
         'scannerMinLength': scannerMinLength,
         'scannerDuplicateMs': scannerDuplicateMs,
+        'contactPerson': contactPerson,
+        'contactPhone': contactPhone,
+        'whatsappIconPath': whatsappIconPath,
       };
 
   factory AppSettings.fromJson(Map<String, dynamic> j) {
@@ -561,6 +571,9 @@ class AppSettings {
       scannerKeyGapMs: (j['scannerKeyGapMs'] as num?)?.toInt() ?? d.scannerKeyGapMs,
       scannerMinLength: (j['scannerMinLength'] as num?)?.toInt() ?? d.scannerMinLength,
       scannerDuplicateMs: (j['scannerDuplicateMs'] as num?)?.toInt() ?? d.scannerDuplicateMs,
+      contactPerson: sn(j['contactPerson']) ?? d.contactPerson,
+      contactPhone: sn(j['contactPhone']) ?? d.contactPhone,
+      whatsappIconPath: sn(j['whatsappIconPath']),
     );
   }
 

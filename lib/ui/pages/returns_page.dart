@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/errors.dart';
+import '../../core/money.dart';
 import '../../core/qty.dart';
+import '../../printing/pdf_docs.dart';
 import '../../domain/models/documents.dart';
 import '../../domain/models/party.dart';
 import '../../domain/models/product.dart';
@@ -29,7 +31,7 @@ class ReturnsPage extends ConsumerWidget {
           padding: const EdgeInsets.only(top: 16),
           child: AppTable<ReturnDoc>(
             rows: rows,
-            onRowTap: (r) => _showReturn(context, r, sales),
+            onRowTap: (r) => _showReturn(context, ref, r, sales),
             empty: EmptyState(icon: Icons.assignment_return_outlined, title: 'No returns yet', message: sales ? 'Customer returns appear here.' : 'Returns to suppliers appear here.'),
             columns: [
               AppColumn('Return No', (r) => Text(r.number, style: const TextStyle(fontWeight: FontWeight.w600))),
@@ -39,9 +41,14 @@ class ReturnsPage extends ConsumerWidget {
                 final p = r.partyId == null ? null : app.parties.byId(sales ? PartyKind.customer : PartyKind.supplier, r.partyId!);
                 return Text(p?.name ?? 'Walk-in');
               }),
-              AppColumn('Items', flex: 1, (r) => Text('${r.lines.length}')),
-              AppColumn('Settlement', (r) => Text(r.refundMode == RefundMode.cash ? 'Cash ${r.method.label}' : 'Account credit')),
+              AppColumn('Products', flex: 3, (r) => Text(r.lines.map((l) => '${l.name} ×${l.qty.format()}').join(', '), overflow: TextOverflow.ellipsis)),
+              AppColumn('Settlement', (r) => Text(r.refundMode == RefundMode.cash ? 'Cash refund (${r.method.label})' : 'Account adjustment')),
               AppColumn('Amount', numeric: true, (r) => Text(r.total.format(), style: const TextStyle(fontWeight: FontWeight.w600))),
+              if (sales)
+                AppColumn('Balance after', numeric: true, (r) {
+                  final b = app.sales.customerBalanceAfterReturn(r);
+                  return Text(b == null ? '—' : (b.isNegative ? '${(-b).format()} credit' : b.format()));
+                }),
             ],
           ),
         );
@@ -61,7 +68,7 @@ class ReturnsPage extends ConsumerWidget {
                         r.originalNumber,
                         r.partyId == null ? 'Walk-in' : (app.parties.byId(kind, r.partyId!)?.name ?? ''),
                         r.lines.map((l) => '${l.name} x${l.qty.format()}${l.serials.isEmpty ? '' : ' (${l.serials.map(SerialRecord.displayOf).join(', ')})'}').join('; '),
-                        r.refundMode == RefundMode.cash ? 'Cash ${r.method.label}' : 'Account credit',
+                        r.refundMode == RefundMode.cash ? 'Cash refund ${r.method.label}' : 'Account adjustment',
                         r.reason,
                         r.total.paisa / 100,
                       ]
@@ -104,7 +111,9 @@ class ReturnsPage extends ConsumerWidget {
     );
   }
 
-  void _showReturn(BuildContext context, ReturnDoc r, bool sales) {
+  void _showReturn(BuildContext context, WidgetRef ref, ReturnDoc r, bool sales) {
+    final app = ref.read(servicesProvider);
+    final after = sales ? app.sales.customerBalanceAfterReturn(r) : null;
     showDialog<void>(
       context: context,
       builder: (ctx) => FormDialog(
@@ -113,7 +122,8 @@ class ReturnsPage extends ConsumerWidget {
           InfoRow('Date', dateTimeFmt.format(r.date)),
           InfoRow(sales ? 'Invoice' : 'Purchase', r.originalNumber),
           InfoRow('Reason', r.reason),
-          InfoRow('Settlement', r.refundMode == RefundMode.cash ? 'Cash refund (${r.method.label})' : 'Credited to account'),
+          InfoRow('Settlement', r.refundMode == RefundMode.cash ? 'Cash refund (${r.method.label})' : 'Adjusted in customer account'),
+          if (after != null) InfoRow('Customer balance after return', after.isNegative ? '${(-after).format()} credit' : after.format()),
           const Divider(),
           for (final l in r.lines)
             ListTile(
@@ -125,7 +135,16 @@ class ReturnsPage extends ConsumerWidget {
           const Divider(),
           InfoRow('Total', r.total.format(), strong: true),
         ]),
-        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+        actions: [
+          if (sales)
+            OutlinedButton.icon(
+              key: const ValueKey('ret-print'),
+              onPressed: () => printReturnReceipt(context, ref, r),
+              icon: const Icon(Icons.print_outlined, size: 18),
+              label: Text(r.refundMode == RefundMode.cash ? 'Return receipt' : 'Credit note'),
+            ),
+          FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
       ),
     );
   }
@@ -149,7 +168,7 @@ Future<void> showSalesReturnDialog(BuildContext context, WidgetRef ref, Sale sal
   final lines = <_RetLine>[];
   for (final it in sale.items) {
     final el = it.qty - it.returnedQty;
-    if (!el.isPositive) continue;
+    if (!el.isPositive || !it.isStock) continue;
     final p = app.catalog.byId(it.productId);
     final soldKeys = it.serials.where((k) => app.serials.byKey(k)?.status == SerialStatus.sold && app.serials.byKey(k)?.saleId == sale.id).toList();
     lines.add(_RetLine(it.productId, it.name, el, p?.requiresSerial ?? false, p?.allowDecimal ?? false, soldKeys));
@@ -168,7 +187,17 @@ Future<void> showSalesReturnDialog(BuildContext context, WidgetRef ref, Sale sal
         'inspect': 'Needs inspection',
       },
       allowCredit: sale.customerId != null,
-      submit: (inputs, reason, mode, method) => app.sales.createReturn(saleId: sale.id, lines: inputs, reason: reason, refundMode: mode, method: method));
+      allowAmount: true,
+      submit: (inputs, reason, mode, method, amount) => app.sales.createReturn(saleId: sale.id, lines: inputs, reason: reason, refundMode: mode, method: method, amount: amount),
+      onSaved: (doc) => printReturnReceipt(context, ref, doc));
+}
+
+/// Return receipt (cash refund) or credit note (account adjustment).
+Future<void> printReturnReceipt(BuildContext context, WidgetRef ref, ReturnDoc r) {
+  final app = ref.read(servicesProvider);
+  final customer = r.partyId == null ? null : app.parties.byId(PartyKind.customer, r.partyId!);
+  final st = app.ctx.settings;
+  return showPdf(context, st, () => returnReceiptPdf(st, r, customer: customer, balanceAfter: app.sales.customerBalanceAfterReturn(r)), name: 'Return ${r.number}');
 }
 
 Future<void> showPurchaseReturnDialog(BuildContext context, WidgetRef ref, Purchase pur) async {
@@ -193,7 +222,7 @@ Future<void> showPurchaseReturnDialog(BuildContext context, WidgetRef ref, Purch
       conditions: const {},
       allowCredit: true,
       defaultCredit: true,
-      submit: (inputs, reason, mode, method) => app.purchases.createReturn(purchaseId: pur.id, lines: inputs, reason: reason, refundMode: mode, method: method));
+      submit: (inputs, reason, mode, method, _) => app.purchases.createReturn(purchaseId: pur.id, lines: inputs, reason: reason, refundMode: mode, method: method));
 }
 
 Future<void> _returnDialog(
@@ -203,9 +232,12 @@ Future<void> _returnDialog(
   required Map<String, String> conditions,
   required bool allowCredit,
   bool defaultCredit = false,
-  required Future<ReturnDoc> Function(List<ReturnLineInput>, String, RefundMode, PaymentMethod) submit,
+  bool allowAmount = false,
+  required Future<ReturnDoc> Function(List<ReturnLineInput>, String, RefundMode, PaymentMethod, Money?) submit,
+  Future<void> Function(ReturnDoc)? onSaved,
 }) async {
   final reason = TextEditingController();
+  final amount = TextEditingController();
   var mode = defaultCredit && allowCredit ? RefundMode.accountCredit : RefundMode.cash;
   var method = PaymentMethod.cash;
   await showDialog<void>(
@@ -253,13 +285,23 @@ Future<void> _returnDialog(
               constraints: const BoxConstraints(minWidth: 260),
               child: SegmentedButton<RefundMode>(
                 segments: [
-                  const ButtonSegment(value: RefundMode.cash, label: Text('Cash refund')),
-                  if (allowCredit) const ButtonSegment(value: RefundMode.accountCredit, label: Text('Adjust account')),
+                  const ButtonSegment(value: RefundMode.cash, label: Text('Cash refund', key: ValueKey('ret-cash'))),
+                  if (allowCredit) const ButtonSegment(value: RefundMode.accountCredit, label: Text('Adjust in customer account', key: ValueKey('ret-account'))),
                 ],
                 selected: {mode},
                 onSelectionChanged: (s) => setS(() => mode = s.first),
               ),
             ),
+            if (allowAmount)
+              SizedBox(
+                width: 220,
+                child: TextField(
+                  key: const ValueKey('ret-amount'),
+                  controller: amount,
+                  inputFormatters: moneyInput,
+                  decoration: InputDecoration(labelText: mode == RefundMode.cash ? 'Refund amount (Rs)' : 'Return amount (Rs)', hintText: 'full price if empty'),
+                ),
+              ),
             if (mode == RefundMode.cash)
               SizedBox(
                 width: 220,
@@ -271,10 +313,21 @@ Future<void> _returnDialog(
                 ),
               ),
           ]),
+          if (allowAmount)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                mode == RefundMode.cash
+                    ? 'Cash refund: the amount is paid back from the cash drawer (shown in payments and cash reports) and recorded on the customer\'s account.'
+                    : 'Adjust in account: the amount is credited to the customer. It reduces what they owe; if they owe nothing it stays as credit for future bills. No cash is paid.',
+                style: TextStyle(color: c.textMuted, fontSize: 12),
+              ),
+            ),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(
+            key: const ValueKey('ret-save'),
             onPressed: () async {
               final inputs = <ReturnLineInput>[];
               for (final l in lines) {
@@ -287,11 +340,13 @@ Future<void> _returnDialog(
               }
               if (inputs.isEmpty) return showToast(ctx, 'Enter what is being returned.', error: true);
               try {
-                final doc = await submit(inputs, reason.text, mode, method);
+                final amt = amount.text.trim().isEmpty ? null : Money.tryParse(amount.text);
+                final doc = await submit(inputs, reason.text, mode, method, amt);
                 if (ctx.mounted) {
                   Navigator.pop(ctx);
-                  showToast(context, 'Return ${doc.number} saved: ${doc.total.format()}');
+                  showToast(context, 'Return ${doc.number} saved: ${doc.total.format()} ${doc.refundMode == RefundMode.cash ? 'refunded in cash' : 'credited to the account'}');
                 }
+                if (onSaved != null && context.mounted) await onSaved(doc);
               } catch (e) {
                 if (ctx.mounted) showToast(ctx, friendlyError(e), error: true);
               }

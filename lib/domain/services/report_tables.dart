@@ -334,8 +334,8 @@ class ReportBuilder {
       for (final s0 in sales) {
         for (var i = 0; i < s0.items.length; i++) {
           final it = s0.items[i];
-          if (!prodOk(it.productId)) continue;
-          yield (s0, s0.lineRevenue(i), it.cogs, it.qty, it.productId);
+          if (!prodOk(it.isStock ? it.productId : null)) continue;
+          yield (s0, s0.lineRevenue(i), it.cogs, it.qty, it.lineKey);
         }
       }
     }
@@ -500,7 +500,7 @@ class ReportBuilder {
       case ReportKind.salesByProduct:
         final rows = <String, ProductSalesRow>{};
         for (final (s0, rev, cogs, qty, pid) in saleLines()) {
-          final row = rows.putIfAbsent(pid, () => ProductSalesRow(pid, s0.items.firstWhere((it) => it.productId == pid).name));
+          final row = rows.putIfAbsent(pid, () => ProductSalesRow(pid, s0.items.firstWhere((it) => it.lineKey == pid).name));
           row.qty += qty;
           row.revenue += rev;
           row.cogs += cogs;

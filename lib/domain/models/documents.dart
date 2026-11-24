@@ -272,8 +272,21 @@ class ReturnDoc {
 
 // ───────────────────────── Sales ─────────────────────────
 
+/// What a bill line is. Product lines move stock; non-stock items (clips,
+/// screws, small accessories) and services (installation, labour) do not
+/// need a product record and never touch stock.
+enum SaleLineKind { product, nonStock, service }
+
+extension SaleLineKindLabel on SaleLineKind {
+  String get label => switch (this) {
+        SaleLineKind.product => 'Stock product',
+        SaleLineKind.nonStock => 'Non-stock item',
+        SaleLineKind.service => 'Service / labour',
+      };
+}
+
 class SaleItem {
-  final String productId;
+  final String productId; // '' for non-stock items and services
   final String name;
   final Qty qty;
   final Money unitPrice;
@@ -282,6 +295,8 @@ class SaleItem {
   final Money cogs; // cost of goods sold for this line (set on completion)
   final Qty returnedQty;
   final String? techUsageId; // when invoicing material a technician installed
+  final SaleLineKind kind;
+  final String unit; // for non-stock / service lines (pcs, job, hour...)
 
   const SaleItem({
     required this.productId,
@@ -293,14 +308,36 @@ class SaleItem {
     this.cogs = const Money.zero(),
     this.returnedQty = const Qty.zero(),
     this.techUsageId,
+    this.kind = SaleLineKind.product,
+    this.unit = '',
   });
+
+  /// A non-stock item or service line typed at the bill.
+  const SaleItem.custom({
+    required this.kind,
+    required this.name,
+    required this.qty,
+    required this.unitPrice,
+    this.discount = const Money.zero(),
+    this.unit = '',
+  })  : productId = '',
+        serials = const [],
+        cogs = const Money.zero(),
+        returnedQty = const Qty.zero(),
+        techUsageId = null;
+
+  bool get isStock => kind == SaleLineKind.product;
+
+  /// Groups lines in reports: the product, or the typed name for
+  /// non-stock items and services.
+  String get lineKey => isStock ? productId : '${kind.name}:${name.trim().toLowerCase()}';
 
   Money get gross => unitPrice.timesQty(qty);
   Money get net => gross - discount;
 
-  SaleItem copyWith({Qty? qty, Money? unitPrice, Money? discount, List<String>? serials, Money? cogs, Qty? returnedQty}) => SaleItem(
+  SaleItem copyWith({String? name, Qty? qty, Money? unitPrice, Money? discount, List<String>? serials, Money? cogs, Qty? returnedQty, String? unit}) => SaleItem(
         productId: productId,
-        name: name,
+        name: name ?? this.name,
         qty: qty ?? this.qty,
         unitPrice: unitPrice ?? this.unitPrice,
         discount: discount ?? this.discount,
@@ -308,6 +345,8 @@ class SaleItem {
         cogs: cogs ?? this.cogs,
         returnedQty: returnedQty ?? this.returnedQty,
         techUsageId: techUsageId,
+        kind: kind,
+        unit: unit ?? this.unit,
       );
 
   Map<String, dynamic> toJson() => {
@@ -320,6 +359,8 @@ class SaleItem {
         'cogs': cogs.paisa,
         'returnedQty': returnedQty.milli,
         'techUsageId': techUsageId,
+        if (kind != SaleLineKind.product) 'kind': kind.name,
+        if (unit.isNotEmpty) 'unit': unit,
       };
   factory SaleItem.fromJson(Map<String, dynamic> j) => SaleItem(
         productId: s(j['productId']),
@@ -331,6 +372,89 @@ class SaleItem {
         cogs: m(j['cogs']),
         returnedQty: qy(j['returnedQty']),
         techUsageId: sn(j['techUsageId']),
+        kind: SaleLineKind.values.firstWhere((k) => k.name == j['kind'], orElse: () => SaleLineKind.product),
+        unit: s(j['unit']),
+      );
+}
+
+/// A saved non-stock item or service for quick billing (e.g. "Clips",
+/// "CCTV Installation").
+class BillingPreset {
+  final SaleLineKind kind;
+  final String name;
+  final Money unitPrice;
+  final String unit;
+  const BillingPreset({required this.kind, required this.name, required this.unitPrice, this.unit = ''});
+
+  Map<String, dynamic> toJson() => {'kind': kind.name, 'name': name, 'unitPrice': unitPrice.paisa, 'unit': unit};
+  factory BillingPreset.fromJson(Map<String, dynamic> j) => BillingPreset(
+        kind: SaleLineKind.values.firstWhere((k) => k.name == j['kind'], orElse: () => SaleLineKind.nonStock),
+        name: s(j['name']),
+        unitPrice: m(j['unitPrice']),
+        unit: s(j['unit']),
+      );
+
+  SaleItem toLine({Qty qty = const Qty.one()}) => SaleItem.custom(kind: kind, name: name, qty: qty, unitPrice: unitPrice, unit: unit);
+}
+
+/// One edit of a completed invoice: what it was and what it became.
+class SaleEdit {
+  final String id;
+  final DateTime at;
+  final String userId;
+  final String reason;
+  final List<SaleItem> beforeItems;
+  final Money beforeDiscount;
+  final String beforeNotes;
+  final Money beforeTotal;
+  final List<SaleItem> afterItems;
+  final Money afterDiscount;
+  final String afterNotes;
+  final Money afterTotal;
+  const SaleEdit({
+    required this.id,
+    required this.at,
+    required this.userId,
+    required this.reason,
+    required this.beforeItems,
+    required this.beforeDiscount,
+    required this.beforeNotes,
+    required this.beforeTotal,
+    required this.afterItems,
+    required this.afterDiscount,
+    required this.afterNotes,
+    required this.afterTotal,
+  });
+
+  Money get difference => afterTotal - beforeTotal;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'at': at.toIso8601String(),
+        'userId': userId,
+        'reason': reason,
+        'beforeItems': beforeItems.map((e) => e.toJson()).toList(),
+        'beforeDiscount': beforeDiscount.paisa,
+        'beforeNotes': beforeNotes,
+        'beforeTotal': beforeTotal.paisa,
+        'afterItems': afterItems.map((e) => e.toJson()).toList(),
+        'afterDiscount': afterDiscount.paisa,
+        'afterNotes': afterNotes,
+        'afterTotal': afterTotal.paisa,
+      };
+  factory SaleEdit.fromJson(Map<String, dynamic> j) => SaleEdit(
+        id: s(j['id']),
+        at: parseDate(j['at']),
+        userId: s(j['userId']),
+        reason: s(j['reason']),
+        beforeItems: mapList(j['beforeItems']).map(SaleItem.fromJson).toList(),
+        beforeDiscount: m(j['beforeDiscount']),
+        beforeNotes: s(j['beforeNotes']),
+        beforeTotal: m(j['beforeTotal']),
+        afterItems: mapList(j['afterItems']).map(SaleItem.fromJson).toList(),
+        afterDiscount: m(j['afterDiscount']),
+        afterNotes: s(j['afterNotes']),
+        afterTotal: m(j['afterTotal']),
       );
 }
 
@@ -351,6 +475,7 @@ class Sale {
   final String cancelReason;
   final String? quotationId;
   final String? creditApprovedBy;
+  final List<SaleEdit> edits; // edit history, oldest first
 
   const Sale({
     required this.id,
@@ -369,7 +494,10 @@ class Sale {
     this.cancelReason = '',
     this.quotationId,
     this.creditApprovedBy,
+    this.edits = const [],
   });
+
+  bool get edited => edits.isNotEmpty;
 
   Money get subtotal => Money.sum(items.map((e) => e.gross));
   Money get lineDiscounts => Money.sum(items.map((e) => e.discount));
@@ -400,6 +528,7 @@ class Sale {
     String? cancelReason,
     String? number,
     String? creditApprovedBy,
+    List<SaleEdit>? edits,
     bool clearCustomer = false,
   }) =>
       Sale(
@@ -419,6 +548,7 @@ class Sale {
         cancelReason: cancelReason ?? this.cancelReason,
         quotationId: quotationId,
         creditApprovedBy: creditApprovedBy ?? this.creditApprovedBy,
+        edits: edits ?? this.edits,
       );
 
   Map<String, dynamic> toJson() => {
@@ -438,6 +568,7 @@ class Sale {
         'cancelReason': cancelReason,
         'quotationId': quotationId,
         'creditApprovedBy': creditApprovedBy,
+        if (edits.isNotEmpty) 'edits': edits.map((e) => e.toJson()).toList(),
         'total': total.paisa,
       };
 
@@ -458,6 +589,7 @@ class Sale {
         cancelReason: s(j['cancelReason']),
         quotationId: sn(j['quotationId']),
         creditApprovedBy: sn(j['creditApprovedBy']),
+        edits: mapList(j['edits']).map(SaleEdit.fromJson).toList(),
       );
 }
 

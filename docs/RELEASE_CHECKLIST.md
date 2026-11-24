@@ -131,3 +131,14 @@ the developer; ☐ = must be checked by a person on the real machine.
 - [ ] Print on the shop's A4 printer: headers repeat on every page, page numbers show, no cut-off amounts.
 - [ ] Export PDF opens in a PDF reader with the same content as the print.
 - [ ] Customer return with Saleable / Faulty / Damaged: stock goes to available / inspection (Faulty) / damaged; statement shows each return once as a credit and in the Product Returns table.
+
+## Billing, invoice editing, non-stock items, return settlement (24 Nov — not yet tested on Windows)
+- [ ] POS → Add Item → Non-stock item: 500 clips @ Rs 2 = Rs 1,000; 1,000 clips on another bill; no product created, stock unchanged.
+- [ ] POS → Add Item → Service: CCTV Installation and labour; printed on A4 and thermal invoices.
+- [ ] Edit a partly paid invoice: payments unchanged, balance and stock correct, edit history shown, ledger and statement show the edit.
+- [ ] Return with cash refund (receipt printed, cash report shows the refund) and with account adjustment (credit note, customer credit used on the next bill).
+- [ ] Restart the app: edited invoices, non-stock lines, presets and returns are unchanged.
+
+## Shop contact on printouts (24 Nov — not yet tested on Windows)
+- [ ] A4 invoice, thermal 80 / 58 mm receipt, payment receipt, return receipt, customer statement: "Contact: M. Osama", green badge and 0371-5263580 visible and not cut off on the real printers.
+- [ ] Clicking the number in an exported PDF opens wa.me/923715263580.
