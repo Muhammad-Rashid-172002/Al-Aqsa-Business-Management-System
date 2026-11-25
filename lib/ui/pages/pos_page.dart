@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/errors.dart';
@@ -75,15 +76,39 @@ class _PosPageState extends ConsumerState<PosPage> {
     });
   }
 
+  // Bill items and product grid scroll on their own, with a visible,
+  // draggable scrollbar (mouse wheel, trackpad, scrollbar drag).
+  final _billScroll = ScrollController();
+  final _gridScroll = ScrollController();
+
   void _set(Sale s) {
+    final before = ref.read(posDraftProvider)?.items.length ?? 0;
     ref.read(posDraftProvider.notifier).state = s;
+    if (s.items.length > before) _revealNewLine();
     if (!_paidTouched && s.customerId == null) {
       _paidCtl.text = s.total.toDecimalString();
     }
   }
 
+  /// Scrolls the bill so a line just added is visible.
+  void _revealNewLine() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_billScroll.hasClients) return;
+      final pos = _billScroll.position;
+      final target = _billLinesEnd ?? pos.maxScrollExtent;
+      _billScroll.animateTo(target.clamp(0, pos.maxScrollExtent), duration: const Duration(milliseconds: 180), curve: Curves.easeOut);
+    });
+  }
+
+  /// Offset at which the last bill line ends, in layouts where the totals
+  /// scroll with the lines (very short windows); null otherwise.
+  double? _billLinesEnd;
+  final _linesEndKey = GlobalKey();
+
   @override
   void dispose() {
+    _billScroll.dispose();
+    _gridScroll.dispose();
     _scanFocus.dispose();
     _scanCtl.dispose();
     _paidCtl.dispose();
@@ -905,7 +930,15 @@ class _PosPageState extends ConsumerState<PosPage> {
                                           .clamp(1, 6);
                                       // Fixed tile height: an aspect ratio made tiles too short
                                       // for a two-line name on narrow windows.
-                                      return GridView.builder(
+                                      return Scrollbar(
+                                        controller: _gridScroll,
+                                        thumbVisibility: true,
+                                        interactive: true,
+                                        thickness: 8,
+                                        child: GridView.builder(
+                                        key: const ValueKey('pos-grid'),
+                                        controller: _gridScroll,
+                                        padding: const EdgeInsets.only(right: 12),
                                         itemCount: products.length,
                                         gridDelegate:
                                             SliverGridDelegateWithFixedCrossAxisCount(
@@ -921,6 +954,7 @@ class _PosPageState extends ConsumerState<PosPage> {
                                                   () =>
                                                       _addProduct(products[k]),
                                             ),
+                                      ),
                                       );
                                     },
                                   ),
@@ -936,19 +970,51 @@ class _PosPageState extends ConsumerState<PosPage> {
                       padding: const EdgeInsets.all(16),
                       child: LayoutBuilder(
                         builder: (context, bill) {
-                          // Short windows: the totals/payment block scrolls together with
-                          // a fixed-height cart list instead of squeezing the cart to zero.
-                          final short = bill.maxHeight < 560;
+                          // Three layouts by height, each with ONE scrolling area for
+                          // the bill lines (no list nested inside another scroll view,
+                          // which trapped the mouse wheel and hid lines):
+                          //  * tall: customer on top, lines scroll, totals fixed below;
+                          //  * medium: customer and lines scroll together, totals fixed;
+                          //  * very short: everything scrolls as one page.
+                          final tall = bill.maxHeight >= 760;
+                          final tiny = bill.maxHeight < 520;
+                          Widget line(int i) => _CartLine(
+                                item: d.items[i],
+                                product: app.catalog.byId(d.items[i].productId),
+                                onEdit: () => _editLine(i),
+                                onRemove: () => _removeLine(i),
+                                onQty: (q) => _updateLine(i, d.items[i].copyWith(qty: q)),
+                              );
+                          final emptyCart = Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 24),
+                            child: Center(
+                              child: Text(
+                                'Scan or click a product to start',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(color: c.textMuted),
+                              ),
+                            ),
+                          );
+                          Widget bar(Widget child) => ScrollbarTheme(
+                                data: ScrollbarThemeData(
+                                  thumbColor: WidgetStatePropertyAll(c.textMuted.withValues(alpha: 0.55)),
+                                  radius: const Radius.circular(8),
+                                ),
+                                child: Scrollbar(
+                                  controller: _billScroll,
+                                  thumbVisibility: true,
+                                  interactive: true,
+                                  thickness: 8,
+                                  child: child,
+                                ),
+                              );
                           final cart =
                               d.items.isEmpty
-                                  ? Center(
-                                    child: Text(
-                                      'Scan or click a product to start',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(color: c.textMuted),
-                                    ),
-                                  )
+                                  ? emptyCart
                                   : ListView.separated(
+                                    key: const ValueKey('pos-cart'),
+                                    controller: _billScroll,
+                                    padding: const EdgeInsets.only(right: 12),
                                     itemCount: d.items.length,
                                     separatorBuilder:
                                         (_, __) =>
@@ -1360,25 +1426,60 @@ class _PosPageState extends ConsumerState<PosPage> {
                               },
                             ),
                           ];
-                          if (short) {
-                            return SingleChildScrollView(
+                          if (tall) {
+                            _billLinesEnd = null;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                ...top,
+                                addItem,
+                                Expanded(child: d.items.isEmpty ? cart : bar(cart)),
+                                ...bottom,
+                              ],
+                            );
+                          }
+                          // Lines are laid out inline in the single scroll area.
+                          final lines = <Widget>[
+                            if (d.items.isEmpty) emptyCart,
+                            for (var i = 0; i < d.items.length; i++) ...[
+                              if (i > 0) Divider(height: 1, color: c.border),
+                              line(i),
+                            ],
+                            SizedBox(key: _linesEndKey, height: 1),
+                          ];
+                          if (tiny) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              final box = _linesEndKey.currentContext?.findRenderObject() as RenderBox?;
+                              final view = _billScroll.hasClients ? _billScroll.position : null;
+                              if (box == null || view == null || !box.attached) return;
+                              final viewport = RenderAbstractViewport.maybeOf(box);
+                              if (viewport == null) return;
+                              _billLinesEnd = (viewport.getOffsetToReveal(box, 1.0).offset).clamp(0, view.maxScrollExtent).toDouble();
+                            });
+                          } else {
+                            _billLinesEnd = null;
+                          }
+                          final area = bar(
+                            SingleChildScrollView(
+                              key: const ValueKey('pos-bill-scroll'),
+                              controller: _billScroll,
+                              padding: const EdgeInsets.only(right: 12),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   ...top,
                                   addItem,
-                                  SizedBox(height: 180, child: cart),
-                                  ...bottom,
+                                  ...lines,
+                                  if (tiny) ...bottom,
                                 ],
                               ),
-                            );
-                          }
+                            ),
+                          );
+                          if (tiny) return area;
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              ...top,
-                              addItem,
-                              Expanded(child: cart),
+                              Expanded(child: area),
                               ...bottom,
                             ],
                           );
@@ -1452,6 +1553,38 @@ class _ProductTile extends StatelessWidget {
   }
 }
 
+/// Serial numbers of a bill line; long lists show the first few with
+/// "+N more" so one line with 50 cameras does not fill the whole bill.
+class _SerialChips extends StatefulWidget {
+  final List<String> serials;
+  const _SerialChips(this.serials);
+  @override
+  State<_SerialChips> createState() => _SerialChipsState();
+}
+
+class _SerialChipsState extends State<_SerialChips> {
+  static const _shown = 4;
+  bool _all = false;
+  @override
+  Widget build(BuildContext context) {
+    final c = AppTheme.of(context);
+    final list = widget.serials;
+    final visible = _all || list.length <= _shown + 1 ? list : list.take(_shown).toList();
+    return Wrap(spacing: 4, runSpacing: 4, children: [
+      for (final k in visible) StatusPill(SerialRecord.displayOf(k), c.textMuted),
+      if (list.length > _shown + 1)
+        InkWell(
+          key: const ValueKey('pos-serials-more'),
+          onTap: () => setState(() => _all = !_all),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            child: Text(_all ? 'Show less' : '+${list.length - _shown} more', style: TextStyle(fontSize: 12, color: c.accent, fontWeight: FontWeight.w600)),
+          ),
+        ),
+    ]);
+  }
+}
+
 class _CartLine extends StatelessWidget {
   final SaleItem item;
   final Product? product;
@@ -1507,14 +1640,7 @@ class _CartLine extends StatelessWidget {
                   if (item.serials.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
-                      child: Wrap(
-                        spacing: 4,
-                        runSpacing: 4,
-                        children: [
-                          for (final k in item.serials)
-                            StatusPill(SerialRecord.displayOf(k), c.textMuted),
-                        ],
-                      ),
+                      child: _SerialChips(item.serials),
                     ),
                 ],
               ),
