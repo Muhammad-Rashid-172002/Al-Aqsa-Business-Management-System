@@ -8,7 +8,6 @@ import '../../core/money.dart';
 import '../../core/qty.dart';
 import '../../core/scan_detector.dart';
 import '../../domain/models/documents.dart';
-import '../../domain/models/labour.dart';
 import '../../domain/models/party.dart';
 import '../../domain/models/product.dart';
 import '../../domain/models/user.dart';
@@ -604,40 +603,18 @@ class _PosPageState extends ConsumerState<PosPage> {
         return;
       }
     }
-    // Labour / installation is the worker's: it goes on a separate labour
-    // bill; the shop invoice gets the products and non-stock items.
-    final labourLines = draft.items.where((e) => e.kind == SaleLineKind.service).toList();
-    final labourTotal = Money.sum(labourLines.map((e) => e.net));
-    var d = draft.copyWith(items: draft.items.where((e) => e.kind != SaleLineKind.service).toList());
-    final grand = d.total + labourTotal;
+    // Labour / installation stays on the customer's invoice (part of what
+    // they pay); it is marked with the worker's name and kept out of shop
+    // sales and profit.
+    final worker = _worker.text.trim();
+    var d = draft.copyWith(items: [
+      for (final it in draft.items) it.kind == SaleLineKind.service && worker.isNotEmpty ? it.copyWith(worker: worker) : it,
+    ]);
     final paid = Money.tryParse(_paidCtl.text) ?? const Money.zero();
-    final used = paid > grand ? grand : paid;
-    // Money received pays the shop invoice first, then the labour bill.
-    final shopPaid = used > d.total ? d.total : used;
-    final labourPaid = used - shopPaid;
-    final change = paid > grand ? paid - grand : const Money.zero();
-    if (d.items.isEmpty) {
-      if (labourPaid < labourTotal && d.customerId == null) {
-        _toast('Select or type the customer: the labour bill is not fully paid.', error: true);
-        return;
-      }
-      try {
-        final lb = await app.labour.fromSaleLines(labourLines,
-            customerId: d.customerId, customerName: d.customerName, workerName: _worker.text, receivedNow: labourPaid, method: d.method);
-        if (app.sales.byId(draft.id) != null) await app.sales.deleteDraft(draft.id);
-        if (!mounted) return;
-        _newBill();
-        _worker.clear();
-        _toast('Labour bill ${lb.number} saved: ${lb.total.format()}${lb.due.isPositive ? ' (due ${lb.due.format()})' : ''}.');
-        final st = app.ctx.settings;
-        await showPdf(context, st, () => labourBillPdf(st, lb), name: lb.number);
-      } catch (e) {
-        if (mounted) _toast(friendlyError(e), error: true);
-      }
-      return;
-    }
+    final change = paid > d.total ? paid - d.total : const Money.zero();
+    final shopPaid = paid > d.total ? d.total : paid;
     d = d.copyWith(paidAtSale: shopPaid);
-    if ((d.paidAtSale < d.total || labourPaid < labourTotal) && d.customerId == null) {
+    if (d.paidAtSale < d.total && d.customerId == null) {
       final go = await confirmDialog(
         context,
         title: 'Credit sale',
@@ -666,28 +643,13 @@ class _PosPageState extends ConsumerState<PosPage> {
       if (mounted) _toast(friendlyError(e), error: true);
       return;
     }
-    LabourBill? labour;
-    if (labourLines.isNotEmpty) {
-      try {
-        labour = await app.labour.fromSaleLines(labourLines,
-            customerId: sale.customerId,
-            customerName: sale.customerName,
-            saleId: sale.id,
-            saleNumber: sale.number,
-            workerName: _worker.text,
-            receivedNow: labourPaid,
-            method: sale.method);
-      } catch (e) {
-        if (mounted) _toast('Invoice ${sale.number} saved, but the labour bill was not: ${friendlyError(e)}. Add it under Sales > Labour Bills.', error: true);
-      }
-    }
     if (!mounted) return;
     _newBill();
     _worker.clear();
-    await _afterSale(sale, change, labour: labour);
+    await _afterSale(sale, change);
   }
 
-  Future<void> _afterSale(Sale sale, Money change, {LabourBill? labour}) async {
+  Future<void> _afterSale(Sale sale, Money change) async {
     final st = app.ctx.settings;
     final cashier = ref.read(currentUserProvider)?.displayName ?? '';
     final customer =
@@ -762,19 +724,11 @@ class _PosPageState extends ConsumerState<PosPage> {
                         sale.remaining.format(),
                         color: c.warning,
                       ),
-                    if (labour != null) ...[
-                      const Divider(height: 18),
-                      InfoRow('Labour bill ${labour.number}', labour.total.format(), strong: true),
-                      InfoRow('Labour received', labour.collected.format()),
-                      if (labour.due.isPositive) InfoRow('Labour due', labour.due.format(), color: c.warning),
-                      const SizedBox(height: 6),
-                      OutlinedButton.icon(
-                        key: const ValueKey('pos-labour-pdf'),
-                        icon: const Icon(Icons.handyman_outlined, size: 18),
-                        label: const Text('Labour bill'),
-                        onPressed: () => showPdf(ctx, st, () => labourBillPdf(st, labour), name: labour.number),
+                    if (sale.labourRevenue.isPositive)
+                      InfoRow(
+                        "Of which labour (worker's, not shop profit)",
+                        sale.labourRevenue.format(),
                       ),
-                    ],
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -907,7 +861,7 @@ class _PosPageState extends ConsumerState<PosPage> {
     final paid = Money.tryParse(_paidCtl.text) ?? const Money.zero();
     final change = paid > d.total ? paid - d.total : const Money.zero();
     final due = d.total - (paid > d.total ? d.total : paid);
-    // Labour lines go on a separate labour bill when the sale is completed.
+    // Labour lines stay on the invoice; shown apart as the worker's money.
     final labourLines = d.items.where((e) => e.kind == SaleLineKind.service).toList();
     final labourTotal = Money.sum(labourLines.map((e) => e.net));
     final shopTotal = d.total - labourTotal;
@@ -1281,8 +1235,8 @@ class _PosPageState extends ConsumerState<PosPage> {
                             ),
                             if (labourLines.isNotEmpty) ...[
                               const SizedBox(height: 6),
-                              InfoRow('Shop invoice (products + non-stock)', shopTotal.format()),
-                              InfoRow('Labour bill (karegar, separate)', labourTotal.format(), color: c.warning),
+                              InfoRow('Shop items (products + non-stock)', shopTotal.format()),
+                              InfoRow("Labour / installation (karegar's)", labourTotal.format(), color: c.warning),
                               const SizedBox(height: 4),
                               TextField(
                                 key: const ValueKey('pos-worker'),

@@ -7,6 +7,7 @@ import '../../domain/models/documents.dart';
 import '../../domain/models/labour.dart';
 import '../../domain/models/party.dart';
 import '../../domain/models/user.dart';
+import '../../domain/services/report_service.dart';
 import '../../export/tabular.dart';
 import '../../printing/pdf_docs.dart';
 import '../bill_lines.dart';
@@ -15,9 +16,12 @@ import '../providers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/forms.dart';
+import 'sales_page.dart' show showInvoiceDetail;
 
-/// Labour / installation bills: the workers' (karegar's) charges, kept
-/// apart from shop invoices, the customer ledger and shop profit.
+/// Labour / installation (karegar's charges): billed on customers' invoices
+/// and payable by them, but the workers' money, so kept out of shop sales
+/// and profit. Lists the labour lines of invoices per worker, and any
+/// separate labour bills saved earlier.
 class LabourBillsPage extends ConsumerStatefulWidget {
   const LabourBillsPage({super.key});
   @override
@@ -33,38 +37,45 @@ class _LabourBillsPageState extends ConsumerState<LabourBillsPage> {
   Widget build(BuildContext context) {
     final c = AppTheme.of(context);
     final app = ref.watch(liveServicesProvider);
-    final list = app.labour.list(from: _from, to: _to, query: _q);
+    final range = DateRange(_from, DateTime(_to.year, _to.month, _to.day, 23, 59, 59));
+    final q = _q.trim().toLowerCase();
+    final lines = app.reports
+        .labourLines(range)
+        .where((x) => q.isEmpty || '${x.$1.number} ${x.$1.customerName} ${x.$2.name} ${x.$2.worker}'.toLowerCase().contains(q))
+        .toList();
+    final total = Money.sum(lines.map((x) => x.$3));
+    final byWorker = <String, Money>{};
+    for (final (_, it, amt) in lines) {
+      final w = it.worker.trim().isEmpty ? 'Not set' : it.worker.trim();
+      byWorker[w] = (byWorker[w] ?? const Money.zero()) + amt;
+    }
+    final workers = byWorker.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final bills = app.labour.list(from: _from, to: _to, query: _q);
     final s = app.labour.summary(from: _from, to: _to);
     List<ExportTable> tables() => [
-          ExportTable('Labour Bills', ['Bill', 'Date', 'Customer', 'Worker', 'Invoice', 'Total', 'Received', 'Due', 'Paid to worker', 'Status'], [
-            for (final b in list)
-              [
-                b.number,
-                b.date,
-                b.customerName,
-                b.workerName,
-                b.saleNumber,
-                b.total.paisa / 100,
-                b.collected.paisa / 100,
-                b.due.paisa / 100,
-                b.paidToWorker.paisa / 100,
-                b.cancelled ? 'Cancelled' : (b.due.isPositive ? 'Due' : 'Paid'),
-              ]
+          ExportTable("Labour / Installation (worker's money)", ['Date', 'Invoice', 'Customer', 'Labour', 'Worker', 'Qty', 'Amount', 'Invoice status'], [
+            for (final (sale, it, amt) in lines)
+              [sale.date, sale.number, sale.customerName, it.name, it.worker, it.qty.milli / 1000, amt.paisa / 100, sale.status.name]
           ], footer: [
-            ['Total (${s.bills})', null, null, null, null, s.billed.paisa / 100, s.collected.paisa / 100, s.due.paisa / 100, s.paidToWorkers.paisa / 100, null]
+            ['Total (${lines.length})', null, null, null, null, null, total.paisa / 100, null]
           ]),
-          ExportTable('Labour by worker', ['Worker', 'Billed', 'Collected', 'Paid to worker'], [
-            for (final (w, billed, coll, paid) in app.labour.byWorker(from: _from, to: _to)) [w, billed.paisa / 100, coll.paisa / 100, paid.paisa / 100]
+          ExportTable('Labour by worker', ['Worker', 'Labour amount'], [
+            for (final e in workers) [e.key, e.value.paisa / 100]
           ]),
+          if (bills.isNotEmpty)
+            ExportTable('Separate labour bills', ['Bill', 'Date', 'Customer', 'Worker', 'Total', 'Received', 'Due', 'Paid to worker'], [
+              for (final b in bills) [b.number, b.date, b.customerName, b.workerName, b.total.paisa / 100, b.collected.paisa / 100, b.due.paisa / 100, b.paidToWorker.paisa / 100]
+            ]),
         ];
     return SingleChildScrollView(
       padding: const EdgeInsets.all(28),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        PageHeader(title: 'Labour Bills', breadcrumbs: const ['Sales', 'Labour Bills'], actions: [
-          ExportMenu(tables: tables, name: 'Labour Bills ${dateFmt.format(_from).replaceAll('/', '-')}', settings: () => app.ctx.settings, landscape: true),
-          FilledButton.icon(key: const ValueKey('add-labour'), onPressed: () => showLabourBillDialog(context, ref), icon: const Icon(Icons.add), label: const Text('New Labour Bill')),
+        PageHeader(title: 'Labour / Installation', breadcrumbs: const ['Sales', 'Labour'], actions: [
+          ExportMenu(tables: tables, name: 'Labour ${dateFmt.format(_from).replaceAll('/', '-')}', settings: () => app.ctx.settings, landscape: true),
         ]),
-        Text("Installation and labour charges are the worker's (karegar's) money. They are billed here, separately from the shop invoice, and are not in shop sales, the customer ledger or shop profit.",
+        Text(
+            "Labour and installation are printed on the customer's invoice and are part of what the customer pays. "
+            "They are the worker's (karegar's) money, so they are not counted in shop sales, income or profit.",
             style: TextStyle(color: c.textMuted)),
         const SizedBox(height: 10),
         DateRangeBar(from: _from, to: _to, onChanged: (a, b) => setState(() {
@@ -73,39 +84,60 @@ class _LabourBillsPageState extends ConsumerState<LabourBillsPage> {
             })),
         const SizedBox(height: 12),
         ResponsiveGrid(minItemWidth: 200, children: [
-          StatCard(label: 'Labour billed', icon: Icons.handyman_outlined, value: AnimatedMoney(s.billed), caption: '${s.bills} bill${s.bills == 1 ? '' : 's'}'),
-          StatCard(label: 'Collected from customers', icon: Icons.call_received_rounded, value: AnimatedMoney(s.collected)),
-          StatCard(label: 'Due from customers', icon: Icons.schedule, value: AnimatedMoney(s.due), tone: c.warning),
-          StatCard(label: 'Held for workers', icon: Icons.account_balance_wallet_outlined, value: AnimatedMoney(s.heldForWorkers), caption: 'Collected, not yet paid to workers'),
+          StatCard(label: "Labour on invoices (worker's)", icon: Icons.handyman_outlined, value: AnimatedMoney(total), caption: '${lines.length} line${lines.length == 1 ? '' : 's'}'),
+          for (final e in workers.take(3)) StatCard(label: e.key, icon: Icons.engineering_outlined, value: AnimatedMoney(e.value)),
         ]),
         const SizedBox(height: 12),
         SizedBox(
           width: 300,
           child: TextField(
-            decoration: const InputDecoration(labelText: 'Search bill, customer, worker, invoice', prefixIcon: Icon(Icons.search), isDense: true),
+            decoration: const InputDecoration(labelText: 'Search invoice, customer, labour, worker', prefixIcon: Icon(Icons.search), isDense: true),
             onChanged: (v) => setState(() => _q = v),
           ),
         ),
         const SizedBox(height: 12),
         AppCard(
           padding: EdgeInsets.zero,
-          child: AppTable<LabourBill>(
-            rows: list,
+          child: AppTable<(Sale, SaleItem, Money)>(
+            rows: lines,
             pageSize: 50,
-            onRowTap: (b) => showLabourBillDetail(context, ref, b.id),
-            empty: const EmptyState(icon: Icons.handyman_outlined, title: 'No labour bills in this period', message: 'Add installation or labour in the POS (Add Item > Labour / installation) or press New Labour Bill.'),
+            onRowTap: (x) => showInvoiceDetail(context, ref, x.$1.id),
+            empty: const EmptyState(
+                icon: Icons.handyman_outlined,
+                title: 'No labour in this period',
+                message: 'Add installation or labour in the POS bill: Add Item > Labour / installation.'),
             columns: [
-              AppColumn('Bill', flex: 1, minWidth: 100, (b) => Text(b.number, style: TextStyle(fontWeight: FontWeight.w600, decoration: b.cancelled ? TextDecoration.lineThrough : null))),
-              AppColumn('Date', flex: 1, minWidth: 96, (b) => Text(dateFmt.format(b.date))),
-              AppColumn('Customer', flex: 2, minWidth: 140, (b) => Text(b.customerName, overflow: TextOverflow.ellipsis)),
-              AppColumn('Worker', flex: 2, minWidth: 120, (b) => Text(b.workerName.isEmpty ? '—' : b.workerName, overflow: TextOverflow.ellipsis)),
-              AppColumn('Invoice', flex: 1, minWidth: 100, (b) => Text(b.saleNumber.isEmpty ? '—' : b.saleNumber)),
-              AppColumn('Total', numeric: true, flex: 1, minWidth: 100, (b) => Text(b.total.format(), style: const TextStyle(fontWeight: FontWeight.w700))),
-              AppColumn('Due', numeric: true, flex: 1, minWidth: 90, (b) => Text(b.cancelled ? 'Cancelled' : (b.due.isPositive ? b.due.format() : '—'), style: TextStyle(color: b.due.isPositive ? c.warning : c.textMuted))),
-              AppColumn('To worker', numeric: true, flex: 1, minWidth: 100, (b) => Text(b.paidToWorker.isZero ? '—' : b.paidToWorker.format())),
+              AppColumn('Date', flex: 1, minWidth: 96, (x) => Text(dateFmt.format(x.$1.date))),
+              AppColumn('Invoice', flex: 1, minWidth: 100, (x) => Text(x.$1.number, style: const TextStyle(fontWeight: FontWeight.w600))),
+              AppColumn('Customer', flex: 2, minWidth: 140, (x) => Text(x.$1.customerName, overflow: TextOverflow.ellipsis)),
+              AppColumn('Labour', flex: 3, minWidth: 160, (x) => Text('${x.$2.name}  ×${x.$2.qty.format()} ${x.$2.unit}', overflow: TextOverflow.ellipsis)),
+              AppColumn('Worker', flex: 2, minWidth: 120, (x) => Text(x.$2.worker.isEmpty ? '—' : x.$2.worker)),
+              AppColumn('Amount', numeric: true, flex: 1, minWidth: 100, (x) => Text(x.$3.format(), style: const TextStyle(fontWeight: FontWeight.w700))),
             ],
           ),
         ),
+        if (bills.isNotEmpty) ...[
+          const SizedBox(height: 18),
+          Text('Separate labour bills (${s.bills})', style: TextStyle(fontWeight: FontWeight.w700, color: c.text)),
+          Text('Saved earlier, before labour was put back on invoices. Kept as they were.', style: TextStyle(color: c.textMuted, fontSize: 12)),
+          const SizedBox(height: 8),
+          AppCard(
+            padding: EdgeInsets.zero,
+            child: AppTable<LabourBill>(
+              rows: bills,
+              pageSize: 50,
+              onRowTap: (b) => showLabourBillDetail(context, ref, b.id),
+              columns: [
+                AppColumn('Bill', flex: 1, minWidth: 100, (b) => Text(b.number, style: TextStyle(fontWeight: FontWeight.w600, decoration: b.cancelled ? TextDecoration.lineThrough : null))),
+                AppColumn('Date', flex: 1, minWidth: 96, (b) => Text(dateFmt.format(b.date))),
+                AppColumn('Customer', flex: 2, minWidth: 140, (b) => Text(b.customerName, overflow: TextOverflow.ellipsis)),
+                AppColumn('Worker', flex: 2, minWidth: 120, (b) => Text(b.workerName.isEmpty ? '—' : b.workerName)),
+                AppColumn('Total', numeric: true, flex: 1, minWidth: 100, (b) => Text(b.total.format())),
+                AppColumn('Due', numeric: true, flex: 1, minWidth: 90, (b) => Text(b.cancelled ? 'Cancelled' : (b.due.isPositive ? b.due.format() : '—'))),
+              ],
+            ),
+          ),
+        ],
       ]),
     );
   }

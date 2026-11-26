@@ -265,7 +265,7 @@ class CustomerStatementService {
       final tag = switch (it.kind) {
         SaleLineKind.product => '',
         SaleLineKind.nonStock => ' (non-stock item${it.unit.isEmpty ? '' : ', ${it.unit}'})',
-        SaleLineKind.service => ' (service${it.unit.isEmpty ? '' : ', ${it.unit}'})',
+        SaleLineKind.service => ' (labour / installation${it.unit.isEmpty ? '' : ', ${it.unit}'}${it.worker.isEmpty ? '' : ', ${it.worker}'})',
       };
       final name = it.isStock ? productDetail(it.productId, it.name) : it.name;
       return '$name$tag${serialText(it.serials)}$disc';

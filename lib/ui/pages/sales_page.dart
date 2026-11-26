@@ -35,7 +35,7 @@ class SalesPage extends StatelessWidget {
           child: TabBar(labelColor: c.accent, tabs: const [
             Tab(icon: Icon(Icons.point_of_sale), text: 'New Sale'),
             Tab(icon: Icon(Icons.receipt_long), text: 'Invoices'),
-            Tab(key: ValueKey('tab-labour'), icon: Icon(Icons.handyman_outlined), text: 'Labour Bills'),
+            Tab(key: ValueKey('tab-labour'), icon: Icon(Icons.handyman_outlined), text: 'Labour'),
           ]),
         ),
         const Expanded(child: TabBarView(physics: NeverScrollableScrollPhysics(), children: [PosPage(), InvoicesList(), LabourBillsPage()])),
@@ -209,12 +209,12 @@ class _InvoiceDetail extends ConsumerWidget {
           const Divider(),
           InkWell(
             onTap: () => showLabourBillDetail(context, ref, lb.id),
-            child: InfoRow('Labour bill ${lb.number} (separate, worker${lb.workerName.isEmpty ? '' : ': ${lb.workerName}'})',
+            child: InfoRow('Earlier separate labour bill ${lb.number}${lb.workerName.isEmpty ? '' : ' (${lb.workerName})'}',
                 '${lb.total.format()}${lb.cancelled ? ' cancelled' : (lb.due.isPositive ? ' • due ${lb.due.format()}' : '')}'),
           ),
         ],
         if (s0.labourRevenue.isPositive)
-          Text('This older invoice has labour lines (${s0.labourRevenue.format()}): they stay on the bill but are not counted in shop sales or profit.',
+          Text("Labour / installation on this invoice: ${s0.labourRevenue.format()} (worker's money). The customer pays it; it is not counted in shop sales or profit.",
               style: TextStyle(color: c.textMuted, fontSize: 12)),
         if (s0.edited) ...[
           const Divider(),

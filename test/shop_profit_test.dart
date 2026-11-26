@@ -1,8 +1,10 @@
 // Shop profit counts only stock products (revenue after discounts minus
 // actual purchase cost). Non-stock items are billed but not profit. Labour /
-// installation goes on a separate labour bill: not on the shop invoice, not
-// in the customer ledger, not in shop sales, cash or profit. Older invoices
-// that still carry labour lines keep them, but out of profit.
+// installation is on the customer's invoice and payable (ledger, balance,
+// payments), but it is the worker's money: not shop sales, income or profit.
+// Separate labour bills saved earlier are kept and still work.
+import 'dart:io';
+
 import 'package:al_aqsa_cctv/core/money.dart';
 import 'package:al_aqsa_cctv/data/store/data_store.dart';
 import 'package:al_aqsa_cctv/domain/models/documents.dart';
@@ -40,57 +42,52 @@ void main() {
     return cam.id;
   }
 
-  test('the example: camera Rs 10,000 (cost 8,000) + screws Rs 500 + installation Rs 1,000', () async {
+  test('the example: camera Rs 10,000 (cost 8,000) + screws Rs 500 + installation Rs 1,000 on one invoice', () async {
     final app = env.app;
     final camId = await camera();
     final c = await env.customer('DEMO Profit Grahak');
-
-    // As the POS completes it: the shop invoice (camera + screws) and a labour bill.
     final sale = await app.sales.complete(app.sales.newDraft().copyWith(customerId: c.id, customerName: c.name, items: [
       app.sales.lineFor(env.reload(camId)),
       screws(500),
-    ]).copyWith(paidAtSale: rs(10500)));
-    final lb = await app.labour.create(
-        lines: [LabourLine(description: 'Installation', qty: q(1), rate: rs(1000), unit: 'job')],
-        customerId: c.id,
-        saleId: sale.id,
-        saleNumber: sale.number,
-        workerName: 'Karegar Aslam',
-        receivedNow: rs(1000));
+      SaleItem.custom(kind: SaleLineKind.service, name: 'Installation Labour', qty: q(1), unitPrice: rs(1000), unit: 'job', worker: 'Karegar Aslam'),
+    ]));
 
-    // What the customer pays: 10,500 shop invoice + 1,000 labour bill = 11,500.
-    expect(sale.total, rs(10500));
-    expect(lb.total, rs(1000));
-    expect(sale.total + lb.total, rs(11500));
-    expect(sale.items.any((e) => e.kind == SaleLineKind.service), isFalse, reason: 'no labour on the shop invoice');
+    // The customer's invoice: labour is a separate line, all of it payable.
+    expect(sale.total, rs(11500));
+    expect(sale.items.map((e) => (e.kind, e.net)).toList(), [
+      (SaleLineKind.product, rs(10000)),
+      (SaleLineKind.nonStock, rs(500)),
+      (SaleLineKind.service, rs(1000)),
+    ]);
+    // Ledger / outstanding: 11,500, once (one ledger entry for the invoice).
+    final saleEntries = app.parties.entries(PartyKind.customer, c.id).where((e) => e.refType == 'sale').toList();
+    expect(saleEntries.single.debit, rs(11500));
+    expect(app.parties.byId(PartyKind.customer, c.id)!.balance, rs(11500));
+    expect(app.parties.totalReceivables(), rs(11500));
+    expect(app.customerStatements.build(c.id).closingBalance, rs(11500));
+    // A payment of 11,500 settles the whole invoice.
+    await app.parties.addPayment(kind: PartyKind.customer, partyId: c.id, amount: rs(11500), method: PaymentMethod.cash, againstDocId: sale.id, againstDocNumber: sale.number);
+    expect(app.parties.byId(PartyKind.customer, c.id)!.balance, const Money.zero());
+    expect(app.sales.paidAgainst(sale.id), rs(11500));
+    expect(app.customerStatements.build(c.id).invoices.single.state.name, 'paid');
 
-    // Shop profit: products only.
-    expect(sale.productRevenue, rs(10000));
-    expect(sale.cogs, rs(8000));
-    expect(sale.nonStockRevenue, rs(500));
+    // Separate totals.
+    expect((sale.productRevenue, sale.nonStockRevenue, sale.labourRevenue, sale.shopSales), (rs(10000), rs(500), rs(1000), rs(10500)));
     final range = DateRange.thisMonth(env.clock.now);
     final p = app.reports.profit(range);
     expect((p.grossSales, p.netSales, p.cogs, p.grossProfit), (rs(10000), rs(10000), rs(8000), rs(2000)));
-    expect((p.nonStockSales, p.labourOnInvoices, p.invoicedTotal), (rs(500), const Money.zero(), rs(10500)));
+    expect((p.nonStockSales, p.labourOnInvoices, p.invoicedTotal), (rs(500), rs(1000), rs(11500)));
     final f = app.reports.financials(range);
     expect((f.grossSales, f.discounts, f.netSales, f.cogs, f.grossProfit), (rs(10000), const Money.zero(), rs(10000), rs(8000), rs(2000)));
-    expect(f.netOperatingProfit, rs(2000)); // no expenses yet
-    expect(f.nonStockSales, rs(500));
-    expect((f.labourBills.count, f.labourBills.billed, f.labourBills.collected), (1, rs(1000), rs(1000)));
-    // Cash from customers is the shop invoice only; labour money is the worker's.
-    expect(f.cashReceived, rs(10500));
-    // Dashboard: shop sales (products + screws), profit 2,000; top products = camera only.
+    expect(f.netOperatingProfit, rs(2000));
+    expect((f.nonStockSales, f.labourOnInvoices, f.invoicedTotal), (rs(500), rs(1000), rs(11500)));
+    expect(f.cashReceived, rs(11500)); // cash in hand includes the labour collected for the worker
+    // Dashboard: shop sales 10,500 (no labour), gross profit 2,000 (no labour).
     expect(app.reports.salesTotal(range), rs(10500));
     expect(app.reports.monthly(1).last.grossProfit, rs(2000));
     expect(app.reports.productSales(range).map((r) => (r.name, r.revenue, r.profit)).toList(), [('CCTV Camera', rs(10000), rs(2000))]);
-    expect(app.reports.nonStockSales(range).single.name, 'Screws');
-
-    // Customer ledger and balance: the shop invoice only (paid in full).
-    final entries = app.parties.entries(PartyKind.customer, c.id);
-    expect(entries.where((e) => e.refType == 'sale').single.debit, rs(10500));
-    expect(entries.any((e) => e.note.contains('Installation') || e.refNumber == lb.number), isFalse);
-    expect(app.parties.byId(PartyKind.customer, c.id)!.balance, const Money.zero());
-    expect(app.parties.payments().any((x) => x.refId == lb.id), isFalse);
+    final labour = app.reports.labourLines(range).single;
+    expect((labour.$2.name, labour.$2.worker, labour.$3), ('Installation Labour', 'Karegar Aslam', rs(1000)));
 
     // Stock: only the camera.
     expect(env.reload(camId).stockQty, q(9));
@@ -106,16 +103,19 @@ void main() {
     expect(v('Net Product Sales'), 10000.0);
     expect(v('GROSS PROFIT'), 2000.0);
     expect(v('Non-stock items billed (screws, clips, accessories; no recorded cost)'), 500.0);
+    expect(v("Labour / installation on invoices (worker's money, payable by customers)"), 1000.0);
     final inv = b.build(ReportKind.salesInvoices, range);
     final h = inv.headers;
-    expect(inv.rows.single[h.indexOf('Net Total')], 10500.0);
+    expect(inv.rows.single[h.indexOf('Net Total')], 11500.0);
     expect(inv.rows.single[h.indexOf('Product Gross Profit')], 2000.0);
     expect(inv.rows.single[h.indexOf('Non-stock Items')], 500.0);
+    expect(inv.rows.single[h.indexOf('Labour (worker)')], 1000.0);
     final byProduct = b.workbook(ReportKind.salesByProduct, range);
     expect(byProduct.first.rows.single[0], 'CCTV Camera');
-    expect(byProduct[1].rows.single[0], 'Screws');
+    expect(byProduct[1].rows.map((r) => (r[0], r[1])).toList(), [('Installation Labour', 'Labour (worker)'), ('Screws', 'Non-stock item')]);
     final daily = b.build(ReportKind.salesDaily, range);
     expect(daily.footer.single[daily.headers.indexOf('Net Product Sales')], 10000.0);
+    expect(daily.footer.single[daily.headers.indexOf("Labour / Installation (worker's money)")], 1000.0);
     expect(daily.footer.single[daily.headers.indexOf('Gross Profit (products)')], 2000.0);
     for (final k in ReportKind.values) {
       final t = b.build(k, range);
@@ -124,9 +124,13 @@ void main() {
       }
     }
 
-    // Invoice and labour bill print.
-    expect(String.fromCharCodes((await invoicePdf(app.ctx.settings, sale, customer: c)).take(4)), '%PDF');
-    expect(String.fromCharCodes((await labourBillPdf(app.ctx.settings, lb)).take(4)), '%PDF');
+    // Invoice prints with the labour line (A4 and thermal).
+    for (final paper in PaperKind.values) {
+      final pdf = await invoicePdf(app.ctx.settings, app.sales.byId(sale.id)!, customer: c, paper: paper, paid: app.sales.paidAgainst(sale.id));
+      expect(String.fromCharCodes(pdf.take(4)), '%PDF');
+      final out = Platform.environment['LABOUR_PDF_OUT'];
+      if (out != null) await File('$out/invoice_${paper.name}.pdf').writeAsBytes(pdf);
+    }
   });
 
   test('bill discounts are taken from stock products first, so product profit is never overstated', () async {
@@ -154,7 +158,7 @@ void main() {
     expect(f2.nonStockSales, rs(800)); // screws not returned
   });
 
-  test('older invoices with labour lines keep them on the bill and ledger, but out of shop sales and profit', () async {
+  test('invoices saved before this change keep their lines and balances; labour can be edited on an invoice', () async {
     final app = env.app;
     final camId = await camera();
     final c = await env.customer('DEMO Old Labour');
@@ -178,16 +182,19 @@ void main() {
     expect(app.customerStatements.build(c.id).closingBalance, rs(11500)); // the customer still owes all of it
     expect(app.parties.ledgerBalance(PartyKind.customer, c.id), rs(11500));
 
-    // Editing the old invoice may keep (or remove) its labour line, not add new labour.
+    // Editing keeps, adds or removes labour lines; the ledger follows once.
     final kept = await app.sales.editInvoice(sale.id, items: old.items, invoiceDiscount: const Money.zero(), reason: 'note only', notes: 'checked');
     expect(kept.labourRevenue, rs(1000));
-    expect(await err(() => app.sales.editInvoice(sale.id, items: [...old.items, SaleItem.custom(kind: SaleLineKind.service, name: 'Wiring', qty: q(1), unitPrice: rs(300))], invoiceDiscount: const Money.zero(), reason: 'x')), isNotNull);
+    final more = await app.sales.editInvoice(sale.id, items: [...old.items, SaleItem.custom(kind: SaleLineKind.service, name: 'Wiring', qty: q(1), unitPrice: rs(300))], invoiceDiscount: const Money.zero(), reason: 'wiring');
+    expect((more.total, more.labourRevenue), (rs(11800), rs(1300)));
+    expect(app.parties.byId(PartyKind.customer, c.id)!.balance, rs(11800));
+    expect(app.reports.financials(range).grossProfit, rs(2000));
     final removed = await app.sales.editInvoice(sale.id, items: old.items.where((e) => e.kind != SaleLineKind.service).toList(), invoiceDiscount: const Money.zero(), reason: 'labour moved to a labour bill');
     expect(removed.total, rs(10500));
     expect(app.parties.byId(PartyKind.customer, c.id)!.balance, rs(10500));
   });
 
-  test('labour bills: collect from customer, pay the worker, cancel; nothing touches shop accounts', () async {
+  test('separate labour bills saved earlier still work: collect, pay the worker, cancel; nothing touches shop accounts', () async {
     final app = env.app;
     final c = await env.customer('DEMO Labour Grahak');
     final balance0 = app.parties.byId(PartyKind.customer, c.id)!.balance;

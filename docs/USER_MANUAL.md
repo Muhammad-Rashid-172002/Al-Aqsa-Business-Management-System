@@ -114,18 +114,18 @@ Reports → pick a report → date range → **Excel / CSV / PDF**. Profit is **
 
 - In the bill, press **Add Item (product, non-stock, service)** and choose:
   - **Stock product**: the usual product from stock.
-  - **Non-stock item**: clips, screws, small accessories. Description, quantity (e.g. 500 or 1000), unit and price; no product record, stock is not touched. It is printed on the shop invoice and is part of what the customer pays, but it is **not counted in shop profit** (no purchase cost is recorded for it).
-  - **Labour / installation** (karegar's charges): CCTV / camera / solar installation, wiring, mazdoori. This is the **worker's money**: when the bill is completed it is saved on a separate **Labour Bill** (LB-...), not on the shop invoice, not in the customer's shop ledger, not in shop sales, cash or profit. Type the worker's name in the bill panel.
-- The bill panel shows "Shop invoice" and "Labour bill (karegar, separate)"; TOTAL is what the customer pays for both. Money received pays the shop invoice first, then the labour bill.
-- **Sales → Labour Bills**: every labour bill with customer, worker, invoice, total, received, due, paid to the worker. Open one to **Receive** more from the customer, **Pay worker**, **Print** or **Cancel** it. **New Labour Bill** makes one without a shop invoice. Export to Excel / PDF includes a by-worker sheet.
+  - **Non-stock item**: clips, screws, small accessories. Description, quantity (e.g. 500 or 1000), unit and price; no product record, stock is not touched. Printed on the invoice and payable, but **not counted in shop profit** (no purchase cost is recorded).
+  - **Labour / installation** (karegar's charges): installation, wiring, mazdoori. It is a **separate line on the customer's invoice** and part of the total payable, in the customer ledger and balance, and settled by the customer's payments like the rest of the invoice. It is the **worker's money**, so it is not counted in shop sales, income or profit. Type the worker's name in the bill panel (or in the line) to keep it on the line.
+- The bill panel shows "Shop items" and "Labour / installation (karegar's)"; TOTAL is what the customer pays.
+- **Sales → Labour** lists every labour line on invoices (date, invoice, customer, worker, amount) with totals per worker; export to Excel / PDF. Separate labour bills saved on 26 Nov (before labour went back on invoices) are kept and listed below.
 - Tick **Save for quick billing next time** to keep an item as a preset.
 
 ## Shop profit
 
-- Shop profit counts **only stock products**: their sales after discounts minus their actual purchase cost (FIFO). Net profit = that gross profit (+ repair profit) − shop expenses.
-- A bill discount is taken from the stock products first, so product profit is never overstated.
-- Dashboard "Sales" = products + non-stock items (no labour). "Gross Profit" = stock products only. Reports (Profit & Loss, sales daily / monthly / by product / invoices) show non-stock items and labour in their own columns or sheet, outside profit.
-- Invoices made before labour bills existed keep their labour lines (nothing was removed); those amounts are shown as "Labour on older invoices" and are left out of shop sales and profit. Editing such an invoice can keep or remove the labour line, but new labour cannot be added to an invoice.
+- Separate totals: shop stock product revenue, non-stock item revenue, labour / installation (worker's money), shop gross profit, shop net profit.
+- Shop gross profit = stock products' sales after discounts − their actual purchase cost (FIFO). Net profit = gross profit (+ repair profit) − shop expenses.
+- A bill discount is taken from stock products first, then non-stock items, then labour, so product profit is never overstated and the worker's labour is not cut by the shop's discount.
+- Dashboard "Sales" = products + non-stock items (no labour). "Gross Profit" = stock products only. Customer receivables include labour (the customer owes it). Cash received includes labour collected for workers.
 
 ## Editing a completed invoice (owner)
 

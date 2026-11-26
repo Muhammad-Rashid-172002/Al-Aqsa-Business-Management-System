@@ -297,6 +297,7 @@ class SaleItem {
   final String? techUsageId; // when invoicing material a technician installed
   final SaleLineKind kind;
   final String unit; // for non-stock / service lines (pcs, job, hour...)
+  final String worker; // labour lines: the karegar who did the work
 
   const SaleItem({
     required this.productId,
@@ -310,6 +311,7 @@ class SaleItem {
     this.techUsageId,
     this.kind = SaleLineKind.product,
     this.unit = '',
+    this.worker = '',
   });
 
   /// A non-stock item or service line typed at the bill.
@@ -320,6 +322,7 @@ class SaleItem {
     required this.unitPrice,
     this.discount = const Money.zero(),
     this.unit = '',
+    this.worker = '',
   })  : productId = '',
         serials = const [],
         cogs = const Money.zero(),
@@ -335,7 +338,7 @@ class SaleItem {
   Money get gross => unitPrice.timesQty(qty);
   Money get net => gross - discount;
 
-  SaleItem copyWith({String? name, Qty? qty, Money? unitPrice, Money? discount, List<String>? serials, Money? cogs, Qty? returnedQty, String? unit}) => SaleItem(
+  SaleItem copyWith({String? name, Qty? qty, Money? unitPrice, Money? discount, List<String>? serials, Money? cogs, Qty? returnedQty, String? unit, String? worker}) => SaleItem(
         productId: productId,
         name: name ?? this.name,
         qty: qty ?? this.qty,
@@ -347,6 +350,7 @@ class SaleItem {
         techUsageId: techUsageId,
         kind: kind,
         unit: unit ?? this.unit,
+        worker: worker ?? this.worker,
       );
 
   Map<String, dynamic> toJson() => {
@@ -361,6 +365,7 @@ class SaleItem {
         'techUsageId': techUsageId,
         if (kind != SaleLineKind.product) 'kind': kind.name,
         if (unit.isNotEmpty) 'unit': unit,
+        if (worker.isNotEmpty) 'worker': worker,
       };
   factory SaleItem.fromJson(Map<String, dynamic> j) => SaleItem(
         productId: s(j['productId']),
@@ -374,6 +379,7 @@ class SaleItem {
         techUsageId: sn(j['techUsageId']),
         kind: SaleLineKind.values.firstWhere((k) => k.name == j['kind'], orElse: () => SaleLineKind.product),
         unit: s(j['unit']),
+        worker: s(j['worker']),
       );
 }
 
@@ -554,8 +560,8 @@ class Sale {
   /// no recorded cost, so not counted in shop profit.
   Money get nonStockRevenue => _revenueOf(SaleLineKind.nonStock);
 
-  /// Labour / installation on invoices made before labour moved to separate
-  /// labour bills: the worker's money, not shop income.
+  /// Labour / installation on the invoice: part of what the customer pays,
+  /// but the worker's (karegar's) money, not shop income or profit.
   Money get labourRevenue => _revenueOf(SaleLineKind.service);
 
   /// What the shop sold (products and non-stock items), without labour.

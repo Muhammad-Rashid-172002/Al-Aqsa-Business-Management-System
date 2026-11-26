@@ -47,7 +47,7 @@ class ProfitSummary {
   final Money repairPartsCost;
   final int invoiceCount;
   final Money nonStockSales; // billed, not in profit
-  final Money labourOnInvoices; // labour lines on older invoices (worker's)
+  final Money labourOnInvoices; // labour / installation lines (worker's money)
   final Money invoicedTotal; // everything billed on shop invoices
   const ProfitSummary({
     required this.grossSales,
@@ -105,7 +105,7 @@ class FinancialSummary {
   final Money purchases;
   final Money customerOutstanding; // as of the end of the period
   final Money nonStockSales; // screws, clips...: billed, not in profit
-  final Money labourOnInvoices; // labour lines on older invoices: worker's
+  final Money labourOnInvoices; // labour / installation lines: worker's money
   final Money invoicedTotal; // everything billed on shop invoices
   final LabourBillTotals labourBills; // separate labour bills (worker's)
   const FinancialSummary({
@@ -336,6 +336,20 @@ class ReportService {
       }
     }
     return rows.values.toList()..sort((a, b) => b.revenue.compareTo(a.revenue));
+  }
+
+  /// Labour / installation lines on invoices in the period (the workers'
+  /// money): the invoice, the line and its amount after discounts.
+  List<(Sale, SaleItem, Money)> labourLines(DateRange r) {
+    final out = <(Sale, SaleItem, Money)>[];
+    for (final sale in _sales(r)) {
+      final rev = sale.lineRevenues();
+      for (var k = 0; k < sale.items.length; k++) {
+        if (sale.items[k].kind == SaleLineKind.service) out.add((sale, sale.items[k], rev[k]));
+      }
+    }
+    out.sort((a, b) => b.$1.date.compareTo(a.$1.date));
+    return out;
   }
 
   Map<String, Money> customerSales(DateRange r) {

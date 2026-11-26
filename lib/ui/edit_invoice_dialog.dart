@@ -61,7 +61,7 @@ class _EditInvoiceDialogState extends ConsumerState<EditInvoiceDialog> {
 
   Future<void> _addItem() async {
     final app = ref.read(servicesProvider);
-    final kind = await chooseLineKind(context, allowService: false);
+    final kind = await chooseLineKind(context);
     if (kind == null || !mounted) return;
     if (kind != SaleLineKind.product) {
       final line = await showCustomLineDialog(context, ref, kind: kind);

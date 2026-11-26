@@ -125,6 +125,12 @@ Every scenario ends with `IntegrityService.check()` reporting no issues.
 - New widget test in `test/billing_ui_test.dart`: POS bill with screws + installation → invoice + labour bill (Mac / Windows only).
 - Full pure-Dart suite 159/159 passed; analyze clean (3.41.6), deprecation infos only (3.50).
 
+### Labour back on the customer invoice (27 Nov)
+- Changed rule: labour / installation is a line on the customer's invoice (payable, in the ledger), kept out of shop sales and profit; no separate labour bill is created any more (earlier labour bills are kept).
+- `test/shop_profit_test.dart` (4 tests, passed here): one invoice camera 10,000 + screws 500 + installation 1,000 = 11,500; one ledger entry 11,500; balance and receivables 11,500; payment 11,500 settles it; product revenue 10,000, cost 8,000, gross profit 2,000, net 1,500 after Rs 500 expense; dashboard sales 10,500; labour 1,000 separate in P&L, invoice, daily and by-product reports; invoice PDF A4 / thermal (text checked with pdftotext: "Installation Labour [Labour, job] Rs 1,000", "Grand Total Rs 11,500"). Discount allocation, preserved older data and labour edits, earlier labour bills.
+- `test/billing_edit_test.dart` updated back to labour on invoices.
+- Full pure-Dart suite 159/159 passed; analyze clean (3.41.6), deprecation infos only (3.50).
+
 ## 3. Your local results (Mac)
 Dependency-fix run, from your `verify_logs/` on 16 Nov (read by the developer from the files on your Mac): pub get ✅, deps ✅, analyze ✅, `flutter test` ✅ **61/61 passed** (incl. `widget_test.dart` and `export_print_test.dart`), `flutter build macos --release` ✅ (`al_aqsa_cctv.app`, 52 MB). `key_versions.txt` matches section 1.
 

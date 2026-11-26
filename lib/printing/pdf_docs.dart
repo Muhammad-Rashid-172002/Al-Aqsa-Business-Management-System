@@ -178,7 +178,7 @@ String _serialLine(List<String> keys) => keys.isEmpty ? '' : '\nS/N: ${keys.map(
 String _lineName(SaleItem it) => switch (it.kind) {
       SaleLineKind.product => it.name,
       SaleLineKind.nonStock => '${it.name}${it.unit.isEmpty ? '' : ' (${it.unit})'}',
-      SaleLineKind.service => '${it.name} [Service${it.unit.isEmpty ? '' : ', ${it.unit}'}]',
+      SaleLineKind.service => '${it.name} [Labour${it.unit.isEmpty ? '' : ', ${it.unit}'}]',
     };
 
 /// [paid] is what has been paid against the invoice so far (all payments,

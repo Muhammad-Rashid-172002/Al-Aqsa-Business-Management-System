@@ -119,12 +119,9 @@ class SalesService {
     for (final it in draft.items) {
       if (it.unitPrice.isNegative || it.discount.isNegative) throw const ValidationException('Amounts cannot be negative.');
       if (it.net.isNegative) throw ValidationException('Discount on "${it.name}" is larger than the line amount.');
-      if (it.kind == SaleLineKind.service) {
-        // Labour belongs to the worker: it goes on a separate labour bill.
-        throw ValidationException('"${it.name}" is labour / installation. It goes on a separate labour bill, not on the shop invoice.');
-      }
       if (!it.isStock) {
-        // Non-stock item: no product record, no stock movement.
+        // Non-stock item or labour: no product record, no stock movement.
+        // Labour stays on the invoice but is kept out of shop profit.
         items.add(_checkCustomLine(it));
         continue;
       }
@@ -262,7 +259,7 @@ class SalesService {
     if (it.name.trim().isEmpty) throw ValidationException('Enter a description for the ${it.kind.label.toLowerCase()}.');
     if (!it.qty.isPositive) throw ValidationException('Quantity of "${it.name}" must be more than zero.');
     if (it.techUsageId != null || it.serials.isNotEmpty) throw ValidationException('"${it.name}" cannot have serial numbers.');
-    return SaleItem.custom(kind: it.kind, name: it.name.trim(), qty: it.qty, unitPrice: it.unitPrice, discount: it.discount, unit: it.unit.trim());
+    return SaleItem.custom(kind: it.kind, name: it.name.trim(), qty: it.qty, unitPrice: it.unitPrice, discount: it.discount, unit: it.unit.trim(), worker: it.worker.trim());
   }
 
   /// [paidAgainst] for every invoice at once (for lists).
@@ -326,11 +323,6 @@ class SalesService {
       if (it.unitPrice.isNegative || it.discount.isNegative) throw const ValidationException('Amounts cannot be negative.');
       if (it.net.isNegative) throw ValidationException('Discount on "${it.name}" is larger than the line amount.');
       if (it.isStock && !it.qty.isPositive) throw ValidationException('Quantity of "${it.name}" must be more than zero.');
-    }
-    // Labour lines from before labour bills existed may stay (or be removed);
-    // new labour goes on a labour bill.
-    if (items.where((e) => e.kind == SaleLineKind.service).length > sale.items.where((e) => e.kind == SaleLineKind.service).length) {
-      throw const ValidationException('New labour / installation goes on a separate labour bill, not on the shop invoice.');
     }
     final draft = sale.copyWith(items: items, invoiceDiscount: invoiceDiscount);
     final newTotal = draft.total;

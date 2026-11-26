@@ -121,7 +121,7 @@ void main() {
     await tester.runAsync(env.dispose);
   });
 
-  testWidgets('POS: completing a bill with screws and installation makes a shop invoice (screws) and a separate labour bill', (tester) async {
+  testWidgets('POS: screws and installation stay on one customer invoice; the worker is saved on the labour line', (tester) async {
     final env = (await tester.runAsync(TestEnv.create))!;
     late Party cust;
     await tester.runAsync(() async => cust = await env.customer('UI Labour Grahak'));
@@ -132,7 +132,7 @@ void main() {
       SaleItem.custom(kind: SaleLineKind.service, name: 'Installation', qty: q(1), unitPrice: rs(1000)),
     ]);
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('Labour bill (karegar, separate)'), findsOneWidget);
+    expect(find.text("Labour / installation (karegar's)"), findsOneWidget);
     await tester.enterText(find.byKey(const ValueKey('pos-worker')), 'Aslam');
     await tester.pump();
     await tester.runAsync(() async {
@@ -141,12 +141,10 @@ void main() {
     });
     await tester.pump(const Duration(milliseconds: 600));
     final sale = app.sales.list(status: DocStatus.completed).single;
-    expect(sale.total, rs(500));
-    expect(sale.items.single.name, 'Screws');
-    final lb = app.labour.list().single;
-    expect((lb.total, lb.workerName, lb.saleId), (rs(1000), 'Aslam', sale.id));
-    expect(app.parties.byId(PartyKind.customer, cust.id)!.balance, rs(500)); // labour is not in the ledger
-    expect(find.byKey(const ValueKey('pos-labour-pdf')), findsOneWidget);
+    expect(sale.total, rs(1500));
+    expect(sale.items.map((e) => (e.name, e.worker)).toList(), [('Screws', ''), ('Installation', 'Aslam')]);
+    expect(app.labour.list(), isEmpty); // no duplicate labour bill
+    expect(app.parties.byId(PartyKind.customer, cust.id)!.balance, rs(1500)); // labour is payable
 
     await tester.pump(const Duration(seconds: 5));
     await tester.pumpWidget(const SizedBox());

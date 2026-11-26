@@ -33,9 +33,7 @@ Future<SaleLineKind?> chooseLineKind(BuildContext context, {bool allowService = 
             option(SaleLineKind.product, Icons.inventory_2_outlined, 'A product from stock (stock is reduced)'),
             option(SaleLineKind.nonStock, Icons.category_outlined, 'Clips, screws, small accessories - no stock, no product record'),
             if (allowService)
-              option(SaleLineKind.service, Icons.handyman_outlined, "Installation / labour (karegar's charges): goes on a separate labour bill, not on the shop invoice, not in shop profit")
-            else
-              Text('Labour / installation goes on a separate labour bill (Sales > Labour Bills).', style: TextStyle(color: c.textMuted, fontSize: 12)),
+              option(SaleLineKind.service, Icons.handyman_outlined, "Installation / labour (karegar's charges): on the customer's bill and payable, but the worker's money - not shop sales or profit"),
           ]),
           actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel'))],
         );
@@ -52,7 +50,7 @@ class LineKindPill extends StatelessWidget {
     return switch (item.kind) {
       SaleLineKind.product => const SizedBox.shrink(),
       SaleLineKind.nonStock => StatusPill('Non-stock', c.textMuted),
-      SaleLineKind.service => StatusPill('Labour bill', c.warning),
+      SaleLineKind.service => StatusPill(item.worker.isEmpty ? 'Labour' : 'Labour: ${item.worker}', c.warning),
     };
   }
 }
@@ -79,12 +77,13 @@ class _CustomLineDialogState extends ConsumerState<_CustomLineDialog> {
   late final _qty = TextEditingController(text: widget.existing?.qty.format() ?? '1');
   late final _unit = TextEditingController(text: widget.existing?.unit ?? (widget.kind == SaleLineKind.service ? 'job' : 'pcs'));
   late final _rate = TextEditingController(text: widget.existing?.unitPrice.toDecimalString() ?? '');
+  late final _worker = TextEditingController(text: widget.existing?.worker ?? '');
   late final _disc = TextEditingController(text: widget.existing == null || widget.existing!.discount.isZero ? '' : widget.existing!.discount.toDecimalString());
   bool _savePreset = false;
 
   @override
   void dispose() {
-    for (final t in [_desc, _qty, _unit, _rate, _disc]) {
+    for (final t in [_desc, _qty, _unit, _rate, _disc, _worker]) {
       t.dispose();
     }
     super.dispose();
@@ -106,6 +105,7 @@ class _CustomLineDialogState extends ConsumerState<_CustomLineDialog> {
       unitPrice: Money.parse(_rate.text),
       discount: Money.tryParse(_disc.text) ?? const Money.zero(),
       unit: _unit.text.trim(),
+      worker: widget.kind == SaleLineKind.service ? _worker.text.trim() : '',
     );
     if (item.net.isNegative) return showToast(context, 'The discount is larger than the line amount.', error: true);
     if (_savePreset) {
@@ -166,6 +166,7 @@ class _CustomLineDialogState extends ConsumerState<_CustomLineDialog> {
                 key: const ValueKey('cl-rate'), formatters: moneyInput, validator: moneyValidator, onChanged: (_) => setState(() {})),
           ]),
           FieldRow([
+            if (service) LabeledField('Karegar / worker', _worker, key: const ValueKey('cl-worker')),
             LabeledField('Discount (Rs)', _disc,
                 key: const ValueKey('cl-disc'), formatters: moneyInput, validator: (v) => moneyValidator(v, required: false), onChanged: (_) => setState(() {})),
           ]),
@@ -186,7 +187,7 @@ class _CustomLineDialogState extends ConsumerState<_CustomLineDialog> {
           ]),
           Text(
               service
-                  ? "Labour is the worker's (karegar's) money: it is saved on a separate labour bill, not on the shop invoice, the customer ledger or shop profit."
+                  ? "Labour is shown on the customer's invoice and is part of what they pay, but it is the worker's (karegar's) money: not shop sales, income or profit."
                   : 'Non-stock items are billed on the invoice without a product record, do not reduce stock and are not counted in shop profit.',
               style: TextStyle(color: c.textMuted, fontSize: 12)),
         ]),

@@ -342,7 +342,7 @@ class ReportBuilder {
       }
     }
 
-    /// Non-stock items and labour lines (on older invoices): billed amounts
+    /// Non-stock items and labour / installation lines: billed amounts
     /// after discounts, kept out of profit. Only when no product / category
     /// filter is set.
     Iterable<(Sale, Money, Qty, String, SaleLineKind)> otherLines() sync* {
@@ -401,7 +401,7 @@ class ReportBuilder {
         'Invoices',
         'Net Product Sales',
         'Non-stock Items (not in profit)',
-        if (labour) 'Labour on invoices (worker, not shop)',
+        if (labour) "Labour / Installation (worker's money)",
         if (fin) 'Cost of Goods',
         if (fin) 'Gross Profit (products)',
       ], [
@@ -430,11 +430,11 @@ class ReportBuilder {
 
     ExportTable business(String title, String keyLabel, List<(String, DateRange)> periods) {
       final rows = <List<Object?>>[];
-      final tot = List<Money>.filled(11, const Money.zero());
+      final tot = List<Money>.filled(12, const Money.zero());
       var invoices = 0;
       for (final (label, pr) in periods) {
         final s0 = app.reports.financials(pr);
-        final vals = [s0.grossSales, s0.discounts, s0.salesReturns, s0.netSales, s0.cogs, s0.grossProfit, s0.repairProfit, s0.expenses, s0.netOperatingProfit, s0.netCashFromCustomers, s0.nonStockSales];
+        final vals = [s0.grossSales, s0.discounts, s0.salesReturns, s0.netSales, s0.cogs, s0.grossProfit, s0.repairProfit, s0.expenses, s0.netOperatingProfit, s0.netCashFromCustomers, s0.nonStockSales, s0.labourOnInvoices];
         for (var i = 0; i < vals.length; i++) {
           tot[i] = tot[i] + vals[i];
         }
@@ -443,7 +443,7 @@ class ReportBuilder {
       }
       return ExportTable(
         title,
-        [keyLabel, 'Invoices', 'Product Sales (gross)', 'Product Discounts', 'Returns', 'Net Product Sales', 'Cost of Goods', 'Gross Profit', 'Repair Profit', 'Expenses', 'Net Operating Profit', 'Cash Received (net)', 'Non-stock Items (not in profit)', 'Purchases'],
+        [keyLabel, 'Invoices', 'Product Sales (gross)', 'Product Discounts', 'Returns', 'Net Product Sales', 'Cost of Goods', 'Gross Profit', 'Repair Profit', 'Expenses', 'Net Operating Profit', 'Cash Received (net)', 'Non-stock Items (not in profit)', "Labour / Installation (worker's money)", 'Purchases'],
         rows,
         footer: [
           ['Total', invoices, for (final v in tot) _m(v), _m(app.reports.purchaseTotal(r))]
@@ -496,9 +496,8 @@ class ReportBuilder {
           ['', null],
           ['BILLED BUT NOT SHOP PROFIT — for information', null],
           ['Non-stock items billed (screws, clips, accessories; no recorded cost)', _m(s0.nonStockSales)],
-          if (!s0.labourOnInvoices.isZero) ['Labour on older invoices (worker\'s money)', _m(s0.labourOnInvoices)],
-          ['Labour bills (worker\'s money): ${s0.labourBills.count} billed', _m(s0.labourBills.billed)],
-          ['Labour collected from customers / paid to workers', '${_m(s0.labourBills.collected)} / ${_m(s0.labourBills.paidToWorkers)}'],
+          ['Labour / installation on invoices (worker\'s money, payable by customers)', _m(s0.labourOnInvoices)],
+          if (s0.labourBills.count > 0) ['Separate labour bills (worker\'s money): ${s0.labourBills.count}', _m(s0.labourBills.billed)],
           ['Total billed on shop invoices', _m(s0.invoicedTotal)],
           ['', null],
           ['CASH (not profit) — for information', null],
@@ -529,7 +528,7 @@ class ReportBuilder {
             ['Gross Margin on Sales %', p.marginBp / 100],
             ['Invoices', p.invoiceCount],
             ['Non-stock items billed (not in profit)', _m(p.nonStockSales)],
-            if (!p.labourOnInvoices.isZero) ['Labour on older invoices (worker\'s, not in profit)', _m(p.labourOnInvoices)],
+            ['Labour / installation (worker\'s, not in profit)', _m(p.labourOnInvoices)],
           ], footer: [
             ['NOTE: This is GROSS profit — shop expenses are not subtracted. See "Profit & Loss" for net operating profit.', ''],
           ]),

@@ -54,7 +54,7 @@ void main() {
     return (env.reload(cam.id), env.reload(cable.id));
   }
 
-  test('1-4: 500 and 1000 clips on bills (no stock, in ledger, reports and PDF); installation and labour go on a labour bill', () async {
+  test('1-4: 500 and 1000 clips, installation and labour on the bill (no stock, in ledger and payable, reports, PDF); labour not shop profit', () async {
     final app = env.app;
     final (cam, cable) = await stock();
     final c = await env.customer('DEMO Clips Grahak');
@@ -66,14 +66,14 @@ void main() {
     ]);
     final inv1 = await app.sales.complete(d1.copyWith(paidAtSale: rs(3000)));
     expect(inv1.total, rs(40 * 50 + 500 * 2));
-    final d2 = app.sales.newDraft().copyWith(customerId: c.id, customerName: c.name, items: [clips(1000)]);
+    final d2 = app.sales.newDraft().copyWith(customerId: c.id, customerName: c.name, items: [
+      clips(1000),
+      service('CCTV Installation', 1, 5000).copyWith(worker: 'Karegar Aslam'),
+      service('Labour charges (mazdoori)', 2, 1500, unit: 'day'),
+    ]);
     final inv2 = await app.sales.complete(d2);
-    expect(inv2.total, rs(2000));
-    // Labour is not allowed on the shop invoice; it goes on a labour bill.
-    expect(await err(() => app.sales.complete(app.sales.newDraft().copyWith(customerId: c.id, customerName: c.name, items: [clips(10), service('CCTV Installation', 1, 5000)]))), isNotNull);
-    final lb = await app.labour.fromSaleLines([service('CCTV Installation', 1, 5000), service('Labour charges (mazdoori)', 2, 1500, unit: 'day')],
-        customerId: c.id, saleId: inv2.id, saleNumber: inv2.number, workerName: 'Karegar Aslam');
-    expect(lb.total, rs(8000));
+    expect(inv2.total, rs(2000 + 5000 + 3000));
+    expect(inv2.labourRevenue, rs(8000));
 
     // Stock: only the cable moved; clips and services never touch stock.
     expect(env.reload(cable.id).stockQty, stockBefore[cable.id]! - q(40));
@@ -82,11 +82,14 @@ void main() {
     final saved = app.sales.byId(inv2.id)!;
     expect(saved.items.map((e) => (e.kind, e.productId, e.cogs)).toList(), [
       (SaleLineKind.nonStock, '', const Money.zero()),
+      (SaleLineKind.service, '', const Money.zero()),
+      (SaleLineKind.service, '', const Money.zero()),
     ]);
+    expect(saved.items[1].worker, 'Karegar Aslam');
 
-    // Ledger and dashboard: the shop invoices only; labour is not in the ledger.
-    expect(app.parties.byId(PartyKind.customer, c.id)!.balance, rs(3000 + 2000 - 3000));
-    expect(app.parties.totalReceivables(), rs(2000));
+    // Ledger: the customer owes the whole invoice, labour included.
+    expect(app.parties.byId(PartyKind.customer, c.id)!.balance, rs(3000 + 10000 - 3000));
+    expect(app.parties.totalReceivables(), rs(10000));
 
     // Reports: clips from both bills are one non-stock row, not in product profit.
     final range = DateRange.thisMonth(env.clock.now);
@@ -95,19 +98,22 @@ void main() {
     expect(clipRow.qty, q(1500));
     expect(clipRow.revenue, rs(3000));
     expect(clipRow.profit, const Money.zero());
-    expect(app.reports.nonStockSales(range).any((x) => x.name == 'CCTV Installation'), isFalse);
+    final inst = app.reports.nonStockSales(range).singleWhere((x) => x.name == 'CCTV Installation');
+    expect((inst.kind, inst.revenue, inst.profit), (SaleLineKind.service, rs(5000), const Money.zero()));
     final fin = app.reports.financials(range);
     expect(fin.grossSales, rs(2000)); // the cable only
     expect(fin.nonStockSales, rs(3000));
     expect(fin.cogs, rs(40 * 20)); // only the cable has a cost
     expect(fin.grossProfit, rs(2000 - 800));
-    expect(fin.labourBills.billed, rs(8000));
+    expect(fin.labourOnInvoices, rs(8000));
+    expect(fin.invoicedTotal, rs(3000 + 10000));
+    expect(app.reports.salesTotal(range), rs(3000 + 10000 - 8000)); // shop sales: no labour
 
     // Statement.
     final s = app.customerStatements.build(c.id);
     expect(s.rows.any((x) => x.kind == StmtRowKind.saleItem && x.description.startsWith('Cable Clips (non-stock item, pcs)') && x.qty == q(500)), isTrue);
-    expect(s.rows.any((x) => x.description.contains('CCTV Installation')), isFalse);
-    expect(s.closingBalance, rs(2000));
+    expect(s.rows.any((x) => x.kind == StmtRowKind.saleItem && x.description.startsWith('CCTV Installation (labour / installation, job, Karegar Aslam)') && x.totalPrice == rs(5000)), isTrue);
+    expect(s.closingBalance, rs(10000));
 
     // Invoices with stock and non-stock lines print (A4 and thermal).
     for (final paper in PaperKind.values) {
@@ -205,8 +211,6 @@ void main() {
     expect(Money.sum(lines.map((r) => r.totalPrice!)), rs(2500));
     expect(lines.any((r) => r.description.contains('S/N removed: ED002') && r.description.contains('S/N added: ED003')), isTrue);
     expect(lines.any((r) => r.description.startsWith('Added: Wall plugs')), isTrue);
-    // New labour cannot be added to the invoice by editing.
-    expect(await err(() => app.sales.editInvoice(sale.id, items: [...saved.items, service('Fitting', 1, 500)], invoiceDiscount: rs(500), reason: 'add labour')), isNotNull);
     expect(s.closingBalance, rs(5000));
     expect(s.invoices.single.state, InvoiceState.partlyPaid);
     expect(s.invoices.single.due, rs(5000));

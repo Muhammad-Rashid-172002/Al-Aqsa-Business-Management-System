@@ -97,7 +97,7 @@ class _FinancePageState extends ConsumerState<FinancePage> {
           decoration: BoxDecoration(color: c.primary.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(10)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text('Cash (not profit)', style: TextStyle(fontWeight: FontWeight.w700, color: c.text)),
-            line('Cash received from customers', f.cashReceived),
+            line('Cash received from customers', f.cashReceived, note: 'Includes labour collected for workers'),
             line('Refunds paid to customers', f.refundsPaid, minus: true),
             line('Sold on credit (not received at the sale)', f.creditSales, note: 'Counted in sales, not in cash'),
             line('Customer balances outstanding at period end', f.customerOutstanding),
@@ -111,9 +111,8 @@ class _FinancePageState extends ConsumerState<FinancePage> {
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text('Billed, but not shop profit', style: TextStyle(fontWeight: FontWeight.w700, color: c.text)),
             line('Non-stock items (screws, clips, accessories)', f.nonStockSales, note: 'On invoices and payable; no recorded cost, so not in profit'),
-            if (!f.labourOnInvoices.isZero) line('Labour on older invoices', f.labourOnInvoices, note: "Worker's money, not shop income"),
-            line('Labour bills (${f.labourBills.count})', f.labourBills.billed, note: 'Separate labour bills: the worker\'s money'),
-            line('Labour collected / paid to workers', f.labourBills.collected, note: 'Paid to workers ${f.labourBills.paidToWorkers.format()}'),
+            line('Labour / installation on invoices', f.labourOnInvoices, note: "Payable by customers; the worker's (karegar's) money, not shop income"),
+            if (f.labourBills.count > 0) line('Separate labour bills (${f.labourBills.count})', f.labourBills.billed, note: 'Collected ${f.labourBills.collected.format()} • paid to workers ${f.labourBills.paidToWorkers.format()}'),
             line('Total billed on shop invoices', f.invoicedTotal),
           ]),
         ),

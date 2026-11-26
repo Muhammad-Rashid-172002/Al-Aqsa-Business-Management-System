@@ -148,3 +148,9 @@ the developer; ☐ = must be checked by a person on the real machine.
 - [ ] Dashboard: sales Rs 10,500, gross profit Rs 2,000 (cost 8,000). Profit & Loss shows screws and labour under "Billed, but not shop profit".
 - [ ] Customer ledger shows only the invoice; Sales → Labour Bills shows the labour bill; Receive / Pay worker / Print / Cancel work.
 - [ ] An older invoice with a labour line still shows it; it is not in shop profit.
+
+## Labour back on the customer invoice (27 Nov — not yet tested on Windows)
+- [ ] POS: camera 10,000 + screws 500 + installation 1,000 → one invoice Rs 11,500 with labour as its own line (A4 and thermal print).
+- [ ] Customer balance Rs 11,500; a Rs 11,500 payment settles it.
+- [ ] Dashboard sales Rs 10,500, gross profit Rs 2,000; Profit & Loss shows labour Rs 1,000 as worker's money.
+- [ ] Sales → Labour lists the line with the worker's name.
