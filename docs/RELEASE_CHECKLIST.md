@@ -142,3 +142,9 @@ the developer; ☐ = must be checked by a person on the real machine.
 ## Shop contact on printouts (24 Nov — not yet tested on Windows)
 - [ ] A4 invoice, thermal 80 / 58 mm receipt, payment receipt, return receipt, customer statement: "Contact: M. Osama", green badge and 0371-5263580 visible and not cut off on the real printers.
 - [ ] Clicking the number in an exported PDF opens wa.me/923715263580.
+
+## Shop profit and labour bills (26 Nov — not yet tested on Windows)
+- [ ] POS: camera Rs 10,000 + screws Rs 500 + installation Rs 1,000 → invoice Rs 10,500, labour bill Rs 1,000, customer pays Rs 11,500.
+- [ ] Dashboard: sales Rs 10,500, gross profit Rs 2,000 (cost 8,000). Profit & Loss shows screws and labour under "Billed, but not shop profit".
+- [ ] Customer ledger shows only the invoice; Sales → Labour Bills shows the labour bill; Receive / Pay worker / Print / Cancel work.
+- [ ] An older invoice with a labour line still shows it; it is not in shop profit.

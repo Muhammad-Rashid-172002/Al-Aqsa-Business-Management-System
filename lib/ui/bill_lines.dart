@@ -11,7 +11,8 @@ import 'widgets/common.dart';
 import 'widgets/forms.dart';
 
 /// "+ Add Item": stock product, non-stock item or service / labour.
-Future<SaleLineKind?> chooseLineKind(BuildContext context) => showDialog<SaleLineKind>(
+/// [allowService] false hides labour (e.g. when editing a shop invoice).
+Future<SaleLineKind?> chooseLineKind(BuildContext context, {bool allowService = true}) => showDialog<SaleLineKind>(
       context: context,
       builder: (ctx) {
         final c = AppTheme.of(ctx);
@@ -31,7 +32,10 @@ Future<SaleLineKind?> chooseLineKind(BuildContext context) => showDialog<SaleLin
           body: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             option(SaleLineKind.product, Icons.inventory_2_outlined, 'A product from stock (stock is reduced)'),
             option(SaleLineKind.nonStock, Icons.category_outlined, 'Clips, screws, small accessories - no stock, no product record'),
-            option(SaleLineKind.service, Icons.handyman_outlined, 'Installation, labour (mazdoori), repair or other service'),
+            if (allowService)
+              option(SaleLineKind.service, Icons.handyman_outlined, "Installation / labour (karegar's charges): goes on a separate labour bill, not on the shop invoice, not in shop profit")
+            else
+              Text('Labour / installation goes on a separate labour bill (Sales > Labour Bills).', style: TextStyle(color: c.textMuted, fontSize: 12)),
           ]),
           actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel'))],
         );
@@ -48,7 +52,7 @@ class LineKindPill extends StatelessWidget {
     return switch (item.kind) {
       SaleLineKind.product => const SizedBox.shrink(),
       SaleLineKind.nonStock => StatusPill('Non-stock', c.textMuted),
-      SaleLineKind.service => StatusPill('Service', c.accent),
+      SaleLineKind.service => StatusPill('Labour bill', c.warning),
     };
   }
 }
@@ -180,7 +184,10 @@ class _CustomLineDialogState extends ConsumerState<_CustomLineDialog> {
             Text('Total  ', style: TextStyle(color: c.textMuted)),
             Text(_total.format(), key: const ValueKey('cl-total'), style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: c.text)),
           ]),
-          Text(service ? 'Services are billed as revenue and do not touch stock.' : 'Non-stock items are billed without a product record and do not reduce stock.',
+          Text(
+              service
+                  ? "Labour is the worker's (karegar's) money: it is saved on a separate labour bill, not on the shop invoice, the customer ledger or shop profit."
+                  : 'Non-stock items are billed on the invoice without a product record, do not reduce stock and are not counted in shop profit.',
               style: TextStyle(color: c.textMuted, fontSize: 12)),
         ]),
       ),

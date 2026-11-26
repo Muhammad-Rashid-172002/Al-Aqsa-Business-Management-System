@@ -17,6 +17,7 @@ import 'backup_service.dart';
 import 'catalog_service.dart';
 import 'context.dart';
 import 'customer_statement.dart';
+import 'labour_service.dart';
 import 'expense_service.dart';
 import 'inspection_service.dart';
 import 'integrity_service.dart';
@@ -39,6 +40,7 @@ class AppServices {
   late final SerialService serials = SerialService(ctx);
   late final CatalogService catalog = CatalogService(ctx, inventory);
   late final PartyService parties = PartyService(ctx);
+  late final LabourService labour = LabourService(ctx);
   late final CustomerStatementService customerStatements = CustomerStatementService(ctx, parties);
   late final PurchaseService purchases = PurchaseService(ctx, inventory, parties, serials);
   late final InspectionService inspections = InspectionService(ctx, inventory, serials);

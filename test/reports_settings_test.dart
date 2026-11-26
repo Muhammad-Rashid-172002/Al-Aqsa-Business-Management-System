@@ -56,7 +56,7 @@ void main() {
     }
     final profit = b.build(ReportKind.profit, r);
     // Net sales: 6000 + 20.5*70 (=1435) - returned 0.5*70 (=35) = 7400; COGS 4000 + 820 - 20 = 4800
-    expect(profit.rows.firstWhere((x) => x[0] == 'Net Sales')[1], 7400.0);
+    expect(profit.rows.firstWhere((x) => x[0] == 'Net Product Sales')[1], 7400.0);
     expect(profit.rows.firstWhere((x) => x[0] == 'Less: Cost of Goods Sold (FIFO)')[1], -4800.0);
     expect(profit.rows.firstWhere((x) => x[0] == 'Gross Profit from Sales')[1], 2600.0);
     expect(profit.rows.firstWhere((x) => x[0] == 'Repair Revenue')[1], 500.0);

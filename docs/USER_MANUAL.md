@@ -110,14 +110,22 @@ Reports → pick a report → date range → **Excel / CSV / PDF**. Profit is **
 - Change the name or number in **Settings → Business** (Contact person / Contact WhatsApp number). Clear both to hide the line.
 - **Settings → Choose WhatsApp icon** puts an icon image of your choice (for example the official WhatsApp icon file from WhatsApp's brand resources) in place of the built-in green phone badge.
 
-## Non-stock items and services (POS)
+## Non-stock items and labour (POS)
 
 - In the bill, press **Add Item (product, non-stock, service)** and choose:
   - **Stock product**: the usual product from stock.
-  - **Non-stock item**: clips, screws, small accessories. Type the description, quantity (e.g. 500 or 1000), unit (pcs) and unit price; the total is calculated. No product record is needed and stock is not touched.
-  - **Service / labour**: CCTV / camera / solar installation, labour (mazdoori), repair service or any service, with quantity, unit (job, day, hour) and rate. Services count as sales revenue and never touch stock.
-- Tick **Save for quick billing next time** to keep the item as a preset; presets appear as chips the next time (the x on a chip removes it).
-- Click a line to change it, or x to remove it, before completing the bill. These lines print on A4 and thermal invoices and appear in the customer ledger and statement.
+  - **Non-stock item**: clips, screws, small accessories. Description, quantity (e.g. 500 or 1000), unit and price; no product record, stock is not touched. It is printed on the shop invoice and is part of what the customer pays, but it is **not counted in shop profit** (no purchase cost is recorded for it).
+  - **Labour / installation** (karegar's charges): CCTV / camera / solar installation, wiring, mazdoori. This is the **worker's money**: when the bill is completed it is saved on a separate **Labour Bill** (LB-...), not on the shop invoice, not in the customer's shop ledger, not in shop sales, cash or profit. Type the worker's name in the bill panel.
+- The bill panel shows "Shop invoice" and "Labour bill (karegar, separate)"; TOTAL is what the customer pays for both. Money received pays the shop invoice first, then the labour bill.
+- **Sales → Labour Bills**: every labour bill with customer, worker, invoice, total, received, due, paid to the worker. Open one to **Receive** more from the customer, **Pay worker**, **Print** or **Cancel** it. **New Labour Bill** makes one without a shop invoice. Export to Excel / PDF includes a by-worker sheet.
+- Tick **Save for quick billing next time** to keep an item as a preset.
+
+## Shop profit
+
+- Shop profit counts **only stock products**: their sales after discounts minus their actual purchase cost (FIFO). Net profit = that gross profit (+ repair profit) − shop expenses.
+- A bill discount is taken from the stock products first, so product profit is never overstated.
+- Dashboard "Sales" = products + non-stock items (no labour). "Gross Profit" = stock products only. Reports (Profit & Loss, sales daily / monthly / by product / invoices) show non-stock items and labour in their own columns or sheet, outside profit.
+- Invoices made before labour bills existed keep their labour lines (nothing was removed); those amounts are shown as "Labour on older invoices" and are left out of shop sales and profit. Editing such an invoice can keep or remove the labour line, but new labour cannot be added to an invoice.
 
 ## Editing a completed invoice (owner)
 

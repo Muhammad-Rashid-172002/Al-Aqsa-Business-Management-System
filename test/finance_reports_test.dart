@@ -106,7 +106,7 @@ void main() {
     expect(v('GROSS PROFIT'), f.grossProfit.paisa / 100);
     expect(v('Total Shop Expenses'), -58000.0);
     expect(v('NET OPERATING PROFIT'), f.netOperatingProfit.paisa / 100);
-    expect(v('Net Sales'), f.netSales.paisa / 100);
+    expect(v('Net Product Sales'), f.netSales.paisa / 100);
     expect(t.first.rows.any((r) => '${r[0]}'.toLowerCase() == 'net profit'), isFalse);
     // The old gross profit report agrees.
     final gp = app.reports.profit(march);

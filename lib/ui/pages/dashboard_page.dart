@@ -163,7 +163,7 @@ class DashboardPage extends ConsumerWidget {
                 label: 'Gross Profit (period)',
                 icon: Icons.trending_up_rounded,
                 value: AnimatedMoney(profit.grossProfit),
-                caption: 'Before shop expenses • margin ${(profit.marginBp / 100).toStringAsFixed(1)}%',
+                caption: 'Stock products only, before expenses • margin ${(profit.marginBp / 100).toStringAsFixed(1)}%',
                 tone: profit.grossProfit.isNegative ? c.danger : c.accent,
               ),
               StatCard(label: 'Customer Receivables', icon: Icons.call_received_rounded, value: AnimatedMoney(app.parties.totalReceivables())),
@@ -281,7 +281,7 @@ class DashboardPage extends ConsumerWidget {
             ], minWidth: 380),
           const SizedBox(height: 8),
           if (fin)
-            Text('Gross profit = net sales − cost of goods sold (FIFO). Rent, salaries and other shop expenses are not recorded, so this is not net profit.',
+            Text('Gross profit = stock product sales after discounts − their actual purchase cost (FIFO), before shop expenses. Non-stock items (screws, clips) and labour are not shop profit; sales exclude labour.',
                 style: TextStyle(color: c.textMuted, fontSize: 11.5)),
         ],
       ),

@@ -63,6 +63,7 @@ const boxLabels = {
   Boxes.products: 'product',
   Boxes.categories: 'category',
   Boxes.expenses: 'expense',
+  Boxes.labourBills: 'labour bill',
   Boxes.employees: 'technician profile',
   Boxes.sales: 'invoices',
   Boxes.purchases: 'purchases',
@@ -222,6 +223,9 @@ class PermanentDeleteService {
         }
         for (final (k, w) in _all(Boxes.warrantyClaims)) {
           if (w['customerId'] == id || sales.contains(w['saleId'])) add(Boxes.warrantyClaims, k);
+        }
+        for (final (k, lb) in _all(Boxes.labourBills)) {
+          if (lb['customerId'] == id || sales.contains(lb['saleId'])) add(Boxes.labourBills, k);
         }
         final salesTotal = completed.fold<num>(0, (a, s) => a + ((s['total'] as num?) ?? 0));
         final received = [for (final k in pays) ctx.store.read(Boxes.payments, k)!].where((p) => p['voided'] != true).fold<num>(0, (a, p) => a + ((p['amount'] as num?) ?? 0));

@@ -281,7 +281,7 @@ extension SaleLineKindLabel on SaleLineKind {
   String get label => switch (this) {
         SaleLineKind.product => 'Stock product',
         SaleLineKind.nonStock => 'Non-stock item',
-        SaleLineKind.service => 'Service / labour',
+        SaleLineKind.service => 'Labour / installation',
       };
 }
 
@@ -508,12 +508,62 @@ class Sale {
 
   /// Net revenue of one line after spreading the invoice-level discount
   /// proportionally across lines (used for refunds and product reports).
-  Money lineRevenue(int index) {
-    final linesNet = Money.sum(items.map((e) => e.net));
-    final line = items[index].net;
-    if (linesNet.isZero) return line;
-    return line - invoiceDiscount.share(line.paisa, linesNet.paisa);
+  /// Each line's revenue after the invoice discount.
+  ///
+  /// The invoice discount is taken from the shop's stock products first
+  /// (spread over them by amount), then from non-stock items, then from
+  /// service lines on older invoices. So the product profit is never
+  /// overstated by pushing the discount onto items that carry no profit.
+  List<Money> lineRevenues() {
+    final out = [for (final it in items) it.net];
+    var left = invoiceDiscount;
+    for (final tier in SaleLineKind.values) {
+      if (!left.isPositive) break;
+      final idx = [for (var k = 0; k < items.length; k++) if (items[k].kind == tier && items[k].net.isPositive) k];
+      final tierNet = Money.sum(idx.map((k) => items[k].net));
+      if (!tierNet.isPositive) continue;
+      final d = left > tierNet ? tierNet : left;
+      left -= d;
+      var rest = d;
+      for (var n = 0; n < idx.length; n++) {
+        final k = idx[n];
+        final share = n == idx.length - 1 ? rest : d.share(items[k].net.paisa, tierNet.paisa);
+        rest -= share;
+        out[k] = out[k] - share;
+      }
+    }
+    return out;
   }
+
+  Money lineRevenue(int index) => lineRevenues()[index];
+
+  Money _revenueOf(SaleLineKind kind) {
+    final rev = lineRevenues();
+    var t = const Money.zero();
+    for (var k = 0; k < items.length; k++) {
+      if (items[k].kind == kind) t += rev[k];
+    }
+    return t;
+  }
+
+  /// Shop stock products, after discounts: the only revenue with a cost, so
+  /// the only revenue in shop profit.
+  Money get productRevenue => _revenueOf(SaleLineKind.product);
+
+  /// Non-stock items (screws, clips...): billed to the customer, no stock,
+  /// no recorded cost, so not counted in shop profit.
+  Money get nonStockRevenue => _revenueOf(SaleLineKind.nonStock);
+
+  /// Labour / installation on invoices made before labour moved to separate
+  /// labour bills: the worker's money, not shop income.
+  Money get labourRevenue => _revenueOf(SaleLineKind.service);
+
+  /// What the shop sold (products and non-stock items), without labour.
+  Money get shopSales => total - labourRevenue;
+
+  /// Stock products before discounts / their line and invoice discounts.
+  Money get productGross => Money.sum(items.where((e) => e.isStock).map((e) => e.gross));
+  Money get productDiscounts => productGross - productRevenue;
 
   Sale copyWith({
     String? customerId,

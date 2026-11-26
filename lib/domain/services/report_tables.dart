@@ -330,12 +330,29 @@ class ReportBuilder {
 
     /// Line-level sales (respecting product/category filters): revenue after
     /// discounts (invoice discount shared over the lines) and FIFO cost.
+    /// Shop STOCK product lines only: the base of shop sales profit.
     Iterable<(Sale, Money, Money, Qty, String)> saleLines() sync* {
       for (final s0 in sales) {
+        final rev = s0.lineRevenues();
         for (var i = 0; i < s0.items.length; i++) {
           final it = s0.items[i];
-          if (!prodOk(it.isStock ? it.productId : null)) continue;
-          yield (s0, s0.lineRevenue(i), it.cogs, it.qty, it.lineKey);
+          if (!it.isStock || !prodOk(it.productId)) continue;
+          yield (s0, rev[i], it.cogs, it.qty, it.lineKey);
+        }
+      }
+    }
+
+    /// Non-stock items and labour lines (on older invoices): billed amounts
+    /// after discounts, kept out of profit. Only when no product / category
+    /// filter is set.
+    Iterable<(Sale, Money, Qty, String, SaleLineKind)> otherLines() sync* {
+      if (lineFilter) return;
+      for (final s0 in sales) {
+        final rev = s0.lineRevenues();
+        for (var i = 0; i < s0.items.length; i++) {
+          final it = s0.items[i];
+          if (it.isStock) continue;
+          yield (s0, rev[i], it.qty, it.lineKey, it.kind);
         }
       }
     }
@@ -350,41 +367,74 @@ class ReportBuilder {
     }
 
     ExportTable grouped(String title, String keyLabel, String Function(DateTime) key) {
+      // [product revenue, cost, non-stock, labour]
       final rows = <String, List<Money>>{};
       final invoices = <String, Set<String>>{};
+      List<Money> g0(String kk) => rows.putIfAbsent(kk, () => List.filled(4, const Money.zero()));
       for (final (s0, rev, cogs, _, _) in saleLines()) {
         final kk = key(s0.date);
-        final g = rows.putIfAbsent(kk, () => [const Money.zero(), const Money.zero()]);
+        final g = g0(kk);
         g[0] = g[0] + rev;
         g[1] = g[1] + cogs;
         (invoices[kk] ??= {}).add(s0.id);
       }
+      for (final (s0, rev, _, _, kind) in otherLines()) {
+        final kk = key(s0.date);
+        final g = g0(kk);
+        if (kind == SaleLineKind.service) {
+          g[3] = g[3] + rev;
+        } else {
+          g[2] = g[2] + rev;
+        }
+        (invoices[kk] ??= {}).add(s0.id);
+      }
       for (final (rt, amount, cost) in returnLines()) {
-        final g = rows.putIfAbsent(key(rt.date), () => [const Money.zero(), const Money.zero()]);
+        final g = g0(key(rt.date));
         g[0] = g[0] - amount;
         g[1] = g[1] - cost;
       }
       final keys = rows.keys.toList()..sort();
-      return ExportTable(title, [keyLabel, 'Invoices', 'Net Sales', if (fin) 'Cost of Goods', if (fin) 'Gross Profit'], [
-        for (final kk in keys) [kk, invoices[kk]?.length ?? 0, _m(rows[kk]![0]), if (fin) _m(rows[kk]![1]), if (fin) _m(rows[kk]![0] - rows[kk]![1])]
+      final labour = rows.values.any((g) => !g[3].isZero);
+      Money tot(int i) => Money.sum(rows.values.map((g) => g[i]));
+      return ExportTable(title, [
+        keyLabel,
+        'Invoices',
+        'Net Product Sales',
+        'Non-stock Items (not in profit)',
+        if (labour) 'Labour on invoices (worker, not shop)',
+        if (fin) 'Cost of Goods',
+        if (fin) 'Gross Profit (products)',
+      ], [
+        for (final kk in keys)
+          [
+            kk,
+            invoices[kk]?.length ?? 0,
+            _m(rows[kk]![0]),
+            _m(rows[kk]![2]),
+            if (labour) _m(rows[kk]![3]),
+            if (fin) _m(rows[kk]![1]),
+            if (fin) _m(rows[kk]![0] - rows[kk]![1]),
+          ]
       ], footer: [
         [
           'Total',
           {for (final s in invoices.values) ...s}.length,
-          _m(Money.sum(rows.values.map((g) => g[0]))),
-          if (fin) _m(Money.sum(rows.values.map((g) => g[1]))),
-          if (fin) _m(Money.sum(rows.values.map((g) => g[0] - g[1]))),
+          _m(tot(0)),
+          _m(tot(2)),
+          if (labour) _m(tot(3)),
+          if (fin) _m(tot(1)),
+          if (fin) _m(tot(0) - tot(1)),
         ]
       ]);
     }
 
     ExportTable business(String title, String keyLabel, List<(String, DateRange)> periods) {
       final rows = <List<Object?>>[];
-      final tot = List<Money>.filled(10, const Money.zero());
+      final tot = List<Money>.filled(11, const Money.zero());
       var invoices = 0;
       for (final (label, pr) in periods) {
         final s0 = app.reports.financials(pr);
-        final vals = [s0.grossSales, s0.discounts, s0.salesReturns, s0.netSales, s0.cogs, s0.grossProfit, s0.repairProfit, s0.expenses, s0.netOperatingProfit, s0.netCashFromCustomers];
+        final vals = [s0.grossSales, s0.discounts, s0.salesReturns, s0.netSales, s0.cogs, s0.grossProfit, s0.repairProfit, s0.expenses, s0.netOperatingProfit, s0.netCashFromCustomers, s0.nonStockSales];
         for (var i = 0; i < vals.length; i++) {
           tot[i] = tot[i] + vals[i];
         }
@@ -393,7 +443,7 @@ class ReportBuilder {
       }
       return ExportTable(
         title,
-        [keyLabel, 'Invoices', 'Gross Sales', 'Discounts', 'Returns', 'Net Sales', 'Cost of Goods', 'Gross Profit', 'Repair Profit', 'Expenses', 'Net Operating Profit', 'Cash Received (net)', 'Purchases'],
+        [keyLabel, 'Invoices', 'Product Sales (gross)', 'Product Discounts', 'Returns', 'Net Product Sales', 'Cost of Goods', 'Gross Profit', 'Repair Profit', 'Expenses', 'Net Operating Profit', 'Cash Received (net)', 'Non-stock Items (not in profit)', 'Purchases'],
         rows,
         footer: [
           ['Total', invoices, for (final v in tot) _m(v), _m(app.reports.purchaseTotal(r))]
@@ -433,16 +483,23 @@ class ReportBuilder {
       case ReportKind.profitLoss:
         final s0 = app.reports.financials(r);
         final summary = ExportTable(k.title, ['Item', 'Amount (PKR)'], [
-          ['Gross Sales (before discounts)', _m(s0.grossSales)],
-          ['Less: Sales Discounts', -_m(s0.discounts)],
+          ['Shop stock product sales (before discounts)', _m(s0.grossSales)],
+          ['Less: Discounts on products (incl. bill discounts)', -_m(s0.discounts)],
           ['Less: Sales Returns', -_m(s0.salesReturns)],
-          ['Net Sales', _m(s0.netSales)],
+          ['Net Product Sales', _m(s0.netSales)],
           ['Less: Cost of Goods Sold (actual FIFO purchase cost)', -_m(s0.cogs)],
           ['GROSS PROFIT', _m(s0.grossProfit)],
           ['Add: Repair Service Profit (charges − parts cost)', _m(s0.repairProfit)],
           for (final (cat, amt) in s0.expensesByCategory) ['Less: $cat', -_m(amt)],
           ['Total Shop Expenses', -_m(s0.expenses)],
           ['NET OPERATING PROFIT', _m(s0.netOperatingProfit)],
+          ['', null],
+          ['BILLED BUT NOT SHOP PROFIT — for information', null],
+          ['Non-stock items billed (screws, clips, accessories; no recorded cost)', _m(s0.nonStockSales)],
+          if (!s0.labourOnInvoices.isZero) ['Labour on older invoices (worker\'s money)', _m(s0.labourOnInvoices)],
+          ['Labour bills (worker\'s money): ${s0.labourBills.count} billed', _m(s0.labourBills.billed)],
+          ['Labour collected from customers / paid to workers', '${_m(s0.labourBills.collected)} / ${_m(s0.labourBills.paidToWorkers)}'],
+          ['Total billed on shop invoices', _m(s0.invoicedTotal)],
           ['', null],
           ['CASH (not profit) — for information', null],
           ['Cash received from customers', _m(s0.cashReceived)],
@@ -461,9 +518,9 @@ class ReportBuilder {
         final p = app.reports.profit(r);
         return [
           ExportTable(k.title, ['Item', 'Amount'], [
-            ['Gross Sales', _m(p.grossSales)],
+            ['Shop Product Sales (after discounts)', _m(p.grossSales)],
             ['Less: Sales Returns', -_m(p.salesReturns)],
-            ['Net Sales', _m(p.netSales)],
+            ['Net Product Sales', _m(p.netSales)],
             ['Less: Cost of Goods Sold (FIFO)', -_m(p.cogs)],
             ['Gross Profit from Sales', _m(p.grossProfit)],
             ['Repair Revenue', _m(p.repairRevenue)],
@@ -471,6 +528,8 @@ class ReportBuilder {
             ['Gross Profit incl. Repairs', _m(p.grossProfitIncludingRepairs)],
             ['Gross Margin on Sales %', p.marginBp / 100],
             ['Invoices', p.invoiceCount],
+            ['Non-stock items billed (not in profit)', _m(p.nonStockSales)],
+            if (!p.labourOnInvoices.isZero) ['Labour on older invoices (worker\'s, not in profit)', _m(p.labourOnInvoices)],
           ], footer: [
             ['NOTE: This is GROSS profit — shop expenses are not subtracted. See "Profit & Loss" for net operating profit.', ''],
           ]),
@@ -514,16 +573,33 @@ class ReportBuilder {
           }
         }
         final list = rows.values.toList()..sort((a, b) => b.revenue.compareTo(a.revenue));
+        final others = <String, ProductSalesRow>{};
+        for (final (s0, rev, qty, key, kind) in otherLines()) {
+          final row = others.putIfAbsent(key, () => ProductSalesRow(key, s0.items.firstWhere((it) => it.lineKey == key).name, kind: kind));
+          row.qty += qty;
+          row.revenue += rev;
+        }
+        final olist = others.values.toList()..sort((a, b) => b.revenue.compareTo(a.revenue));
         return [
           ExportTable(k.title, ['Product', 'Qty', 'Revenue', if (fin) 'Cost', if (fin) 'Gross Profit'], [
             for (final x in list) [x.name, _q(x.qty), _m(x.revenue), if (fin) _m(x.cogs), if (fin) _m(x.profit)]
           ], footer: [
             ['Total', '', _m(Money.sum(list.map((x) => x.revenue))), if (fin) _m(Money.sum(list.map((x) => x.cogs))), if (fin) _m(Money.sum(list.map((x) => x.profit)))]
           ]),
+          if (olist.isNotEmpty)
+            ExportTable('Non-stock items & labour (billed, not shop profit)', ['Item', 'Type', 'Qty', 'Billed'], [
+              for (final x in olist) [x.name, x.kind == SaleLineKind.service ? 'Labour (worker)' : 'Non-stock item', _q(x.qty), _m(x.revenue)]
+            ], footer: [
+              ['Total', '', '', _m(Money.sum(olist.map((x) => x.revenue)))]
+            ]),
         ];
       case ReportKind.salesByCustomer:
         final m0 = <String, Money>{};
         for (final (s0, rev, _, _, _) in saleLines()) {
+          m0[s0.customerName] = (m0[s0.customerName] ?? const Money.zero()) + rev;
+        }
+        for (final (s0, rev, _, _, kind) in otherLines()) {
+          if (kind == SaleLineKind.service) continue; // labour is the worker's
           m0[s0.customerName] = (m0[s0.customerName] ?? const Money.zero()) + rev;
         }
         final list = m0.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
@@ -535,7 +611,7 @@ class ReportBuilder {
       case ReportKind.salesInvoices:
         return [
           ExportTable(k.title, [
-            'Invoice', 'Date', 'Customer', 'Gross Amount', 'Discount', 'Net Total', 'Received', 'Balance', 'Payment Status', if (fin) 'Cost', if (fin) 'Gross Profit',
+            'Invoice', 'Date', 'Customer', 'Gross Amount', 'Discount', 'Net Total', 'Received', 'Balance', 'Payment Status', 'Non-stock Items', 'Labour (worker)', if (fin) 'Product Cost', if (fin) 'Product Gross Profit',
           ], [
             for (final s0 in sales)
               [
@@ -548,8 +624,10 @@ class ReportBuilder {
                 _m(salePaid(s0)),
                 _m(s0.total - salePaid(s0)),
                 status(s0.total, salePaid(s0)).label,
+                _m(s0.nonStockRevenue),
+                _m(s0.labourRevenue),
                 if (fin) _m(s0.cogs),
-                if (fin) _m(s0.total - s0.cogs),
+                if (fin) _m(s0.productRevenue - s0.cogs),
               ]
           ], footer: [
             [
@@ -562,8 +640,10 @@ class ReportBuilder {
               _m(Money.sum(sales.map(salePaid))),
               _m(Money.sum(sales.map((s0) => s0.total - salePaid(s0)))),
               null,
+              _m(Money.sum(sales.map((s0) => s0.nonStockRevenue))),
+              _m(Money.sum(sales.map((s0) => s0.labourRevenue))),
               if (fin) _m(Money.sum(sales.map((s0) => s0.cogs))),
-              if (fin) _m(Money.sum(sales.map((s0) => s0.total - s0.cogs))),
+              if (fin) _m(Money.sum(sales.map((s0) => s0.productRevenue - s0.cogs))),
             ]
           ]),
         ];

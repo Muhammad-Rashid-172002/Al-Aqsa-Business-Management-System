@@ -9,6 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import '../core/money.dart';
 import '../core/qty.dart';
 import '../domain/models/documents.dart';
+import '../domain/models/labour.dart';
 import '../domain/models/operations.dart';
 import '../domain/models/party.dart';
 import '../domain/models/product.dart';
@@ -398,6 +399,61 @@ Future<Uint8List> paymentReceiptPdf(AppSettings st, Payment pay, {Party? party, 
         pw.Text(ascii(st.businessName), style: const pw.TextStyle(fontSize: 9, color: _grey)),
       ]),
     ]),
+  ));
+  return doc.save();
+}
+
+// ───────────────────────── Labour bill (worker / karegar) ─────────────────────────
+
+/// Labour / installation bill: the worker's charges, separate from the shop
+/// invoice.
+Future<Uint8List> labourBillPdf(AppSettings st, LabourBill b) async {
+  final h = PdfHelper(st);
+  final doc = pw.Document(title: b.number);
+  doc.addPage(pw.MultiPage(
+    pageFormat: PdfPageFormat.a5,
+    margin: const pw.EdgeInsets.all(24),
+    build: (_) => [
+      h.header('Labour / Installation Bill', [
+        ('Bill No', b.number),
+        ('Date', _dt.format(b.date)),
+        if (b.saleNumber.isNotEmpty) ('With invoice', b.saleNumber),
+      ]),
+      pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+        pw.Expanded(
+          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+            pw.Text('Customer', style: const pw.TextStyle(fontSize: 9, color: _grey)),
+            pw.Text(ascii(b.customerName), style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold)),
+            if (b.customerPhone.isNotEmpty) pw.Text(ascii(b.customerPhone), style: const pw.TextStyle(fontSize: 9)),
+          ]),
+        ),
+        if (b.workerName.isNotEmpty)
+          pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.end, children: [
+            pw.Text('Worker (karegar)', style: const pw.TextStyle(fontSize: 9, color: _grey)),
+            pw.Text(ascii(b.workerName), style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+          ]),
+      ]),
+      pw.SizedBox(height: 10),
+      h.table(
+        ['Labour / installation', 'Qty', 'Rate', 'Amount'],
+        [
+          for (final l in b.lines) ['${l.description}${l.unit.isEmpty ? '' : ' (${l.unit})'}', l.qty.format(), money(l.rate, st), money(l.amount, st)]
+        ],
+        align: {1: pw.Alignment.centerRight, 2: pw.Alignment.centerRight, 3: pw.Alignment.centerRight},
+        widths: {0: const pw.FlexColumnWidth(4), 1: const pw.FlexColumnWidth(1), 2: const pw.FlexColumnWidth(1.6), 3: const pw.FlexColumnWidth(1.8)},
+      ),
+      h.totals([
+        if (b.discount.isPositive) ('Subtotal', money(b.subtotal, st), false),
+        if (b.discount.isPositive) ('Discount', '- ${money(b.discount, st)}', false),
+        ('Labour total', money(b.total, st), true),
+        ('Received', money(b.collected, st), false),
+        ('Balance due', money(b.due, st), b.due.isPositive),
+      ]),
+      pw.SizedBox(height: 6),
+      pw.Text('Labour charges belong to the worker and are billed separately from the shop invoice.', style: const pw.TextStyle(fontSize: 8, color: _grey)),
+      if (b.cancelled) pw.Text(ascii('CANCELLED: ${b.cancelReason}'), style: pw.TextStyle(fontSize: 10, color: PdfColors.red, fontWeight: pw.FontWeight.bold)),
+      if (b.notes.isNotEmpty) pw.Padding(padding: const pw.EdgeInsets.only(top: 4), child: pw.Text(ascii('Notes: ${b.notes}'), style: const pw.TextStyle(fontSize: 9))),
+    ],
   ));
   return doc.save();
 }

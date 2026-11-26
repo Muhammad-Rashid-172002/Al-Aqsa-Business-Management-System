@@ -45,7 +45,6 @@ void main() {
     final sale = await app.sales.complete(app.sales.newDraft().copyWith(customerId: c.id, customerName: c.name, items: [
       app.sales.lineFor(env.reload(cam.id), qty: q(2)),
       SaleItem.custom(kind: SaleLineKind.nonStock, name: 'Cable Clips', qty: q(500), unitPrice: rs(2), unit: 'pcs'),
-      SaleItem.custom(kind: SaleLineKind.service, name: 'CCTV Installation', qty: q(1), unitPrice: rs(5000), unit: 'job'),
     ]).copyWith(paidAtSale: rs(10000)));
     final pay = await app.parties.addPayment(kind: PartyKind.customer, partyId: c.id, amount: rs(3000), method: PaymentMethod.cash);
     final ret = await app.sales.createReturn(saleId: sale.id, lines: [ReturnLineInput(productId: cam.id, qty: q(1))], reason: 'extra', refundMode: RefundMode.accountCredit);

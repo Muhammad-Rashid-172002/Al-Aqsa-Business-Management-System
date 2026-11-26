@@ -32,12 +32,13 @@ abstract final class Boxes {
   static const meta = 'meta'; // counters, schema version
   static const errorLog = 'error_log';
   static const expenses = 'expenses'; // shop running costs
+  static const labourBills = 'labour_bills'; // worker (karegar) labour, kept apart from shop sales
 
   static const all = [
     users, loginHistory, employees, categories, brands, products, barcodes,
     serials, serialIndex, inspections, costLayers, stockMovements, suppliers, customers, purchases,
     purchaseReturns, sales, salesReturns, payments, ledger, techTxns,
-    techHoldings, quotations, warrantyClaims, repairs, expenses, auditLogs, settings,
+    techHoldings, quotations, warrantyClaims, repairs, expenses, labourBills, auditLogs, settings,
     meta, errorLog,
   ];
 }

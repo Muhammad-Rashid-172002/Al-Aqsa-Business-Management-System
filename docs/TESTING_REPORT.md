@@ -119,6 +119,12 @@ Every scenario ends with `IntegrityService.check()` reporting no issues.
 - Text check with pdftotext on the generated PDFs: "M. Osama" and "0371-5263580" found in all 7. Rendered A4, 80 mm, 58 mm and statement pages checked visually: nothing cut off.
 - Full pure-Dart suite 155/155 passed; analyze clean (3.41.6), deprecation infos only (3.50).
 
+### Shop profit / non-stock / labour bills (26 Nov)
+- `test/shop_profit_test.dart` (4 tests, passed here): the example (camera 10,000 cost 8,000 + screws 500 + installation 1,000 → invoice 10,500, labour bill 1,000, customer pays 11,500; product revenue 10,000, cost 8,000, gross profit 2,000; net profit after a Rs 500 expense 1,500; dashboard sales 10,500; cash received 10,500; ledger shows only the invoice; reports P&L / invoices / by product / daily); bill discount taken from products first (and line revenues always add up to the total), returns; older invoices with labour lines keep them but out of profit, editing can keep/remove but not add labour; labour bills (collect, pay worker, limits, cancel with permission, summary, by worker, no effect on shop ledger/payments/cash).
+- Updated for the new rule: `test/billing_edit_test.dart` (labour now goes on a labour bill; profit expectations), `test/shop_contact_test.dart`, label changes in `test/finance_reports_test.dart` and `test/reports_settings_test.dart` ("Net Product Sales").
+- New widget test in `test/billing_ui_test.dart`: POS bill with screws + installation → invoice + labour bill (Mac / Windows only).
+- Full pure-Dart suite 159/159 passed; analyze clean (3.41.6), deprecation infos only (3.50).
+
 ## 3. Your local results (Mac)
 Dependency-fix run, from your `verify_logs/` on 16 Nov (read by the developer from the files on your Mac): pub get ✅, deps ✅, analyze ✅, `flutter test` ✅ **61/61 passed** (incl. `widget_test.dart` and `export_print_test.dart`), `flutter build macos --release` ✅ (`al_aqsa_cctv.app`, 52 MB). `key_versions.txt` matches section 1.
 

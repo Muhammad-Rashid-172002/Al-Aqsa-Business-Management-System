@@ -11,6 +11,7 @@ import '../../printing/pdf_docs.dart';
 import '../bill_lines.dart';
 import '../edit_invoice_dialog.dart';
 import '../print_actions.dart';
+import 'labour_page.dart';
 import '../record_actions.dart';
 import '../providers.dart';
 import '../theme.dart';
@@ -27,13 +28,17 @@ class SalesPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppTheme.of(context);
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Column(children: [
         Container(
           color: c.surface,
-          child: TabBar(labelColor: c.accent, tabs: const [Tab(icon: Icon(Icons.point_of_sale), text: 'New Sale'), Tab(icon: Icon(Icons.receipt_long), text: 'Invoices')]),
+          child: TabBar(labelColor: c.accent, tabs: const [
+            Tab(icon: Icon(Icons.point_of_sale), text: 'New Sale'),
+            Tab(icon: Icon(Icons.receipt_long), text: 'Invoices'),
+            Tab(key: ValueKey('tab-labour'), icon: Icon(Icons.handyman_outlined), text: 'Labour Bills'),
+          ]),
         ),
-        const Expanded(child: TabBarView(physics: NeverScrollableScrollPhysics(), children: [PosPage(), InvoicesList()])),
+        const Expanded(child: TabBarView(physics: NeverScrollableScrollPhysics(), children: [PosPage(), InvoicesList(), LabourBillsPage()])),
       ]),
     );
   }
@@ -200,6 +205,17 @@ class _InvoiceDetail extends ConsumerWidget {
           Text('Returns', style: TextStyle(fontWeight: FontWeight.w700, color: c.text)),
           for (final r in returns) InfoRow('${r.number} • ${dateFmt.format(r.date)}', r.total.format()),
         ],
+        for (final lb in app.labour.forSale(s0.id)) ...[
+          const Divider(),
+          InkWell(
+            onTap: () => showLabourBillDetail(context, ref, lb.id),
+            child: InfoRow('Labour bill ${lb.number} (separate, worker${lb.workerName.isEmpty ? '' : ': ${lb.workerName}'})',
+                '${lb.total.format()}${lb.cancelled ? ' cancelled' : (lb.due.isPositive ? ' • due ${lb.due.format()}' : '')}'),
+          ),
+        ],
+        if (s0.labourRevenue.isPositive)
+          Text('This older invoice has labour lines (${s0.labourRevenue.format()}): they stay on the bill but are not counted in shop sales or profit.',
+              style: TextStyle(color: c.textMuted, fontSize: 12)),
         if (s0.edited) ...[
           const Divider(),
           InvoiceEditHistory(s0),

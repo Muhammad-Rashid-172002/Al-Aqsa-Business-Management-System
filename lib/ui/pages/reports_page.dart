@@ -261,9 +261,10 @@ class _ProfitCards extends ConsumerWidget {
       padding: const EdgeInsets.only(bottom: 14),
       child: ResponsiveGrid(minItemWidth: 200, spacing: 12, children: [
         for (final e in [
-          ('Net Sales', AnimatedMoney(p.netSales), c.accent),
+          ('Net Product Sales', AnimatedMoney(p.netSales), c.accent),
           ('Cost of Goods Sold', AnimatedMoney(p.cogs), c.warning),
           ('Gross Profit (before expenses)', AnimatedMoney(p.grossProfit), p.grossProfit.isNegative ? c.danger : c.accent),
+          ('Non-stock items (not in profit)', AnimatedMoney(p.nonStockSales), c.textMuted),
         ])
           StatCard(label: e.$1, icon: Icons.insights, value: e.$2, tone: e.$3),
       ]),

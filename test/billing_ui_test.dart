@@ -61,7 +61,7 @@ void main() {
     await tester.enterText(find.descendant(of: find.byKey(const ValueKey('cl-rate')), matching: find.byType(TextFormField)), '5000');
     await tester.pump();
     await _tap(tester, find.byKey(const ValueKey('cl-ok')));
-    expect(find.text('Service'), findsOneWidget);
+    expect(find.text('Labour bill'), findsOneWidget);
 
     final c = ProviderScope.containerOf(tester.element(find.byType(Root)));
     final draft = c.read(posDraftProvider)!;
@@ -120,5 +120,36 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.runAsync(env.dispose);
   });
-}
 
+  testWidgets('POS: completing a bill with screws and installation makes a shop invoice (screws) and a separate labour bill', (tester) async {
+    final env = (await tester.runAsync(TestEnv.create))!;
+    late Party cust;
+    await tester.runAsync(() async => cust = await env.customer('UI Labour Grahak'));
+    final c = await _show(tester, env, NavItem.pos);
+    final app = env.app;
+    c.read(posDraftProvider.notifier).state = app.sales.newDraft().copyWith(customerId: cust.id, customerName: cust.name, items: [
+      SaleItem.custom(kind: SaleLineKind.nonStock, name: 'Screws', qty: q(1), unitPrice: rs(500)),
+      SaleItem.custom(kind: SaleLineKind.service, name: 'Installation', qty: q(1), unitPrice: rs(1000)),
+    ]);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Labour bill (karegar, separate)'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('pos-worker')), 'Aslam');
+    await tester.pump();
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Complete (F9)'));
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    });
+    await tester.pump(const Duration(milliseconds: 600));
+    final sale = app.sales.list(status: DocStatus.completed).single;
+    expect(sale.total, rs(500));
+    expect(sale.items.single.name, 'Screws');
+    final lb = app.labour.list().single;
+    expect((lb.total, lb.workerName, lb.saleId), (rs(1000), 'Aslam', sale.id));
+    expect(app.parties.byId(PartyKind.customer, cust.id)!.balance, rs(500)); // labour is not in the ledger
+    expect(find.byKey(const ValueKey('pos-labour-pdf')), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(env.dispose);
+  });
+}

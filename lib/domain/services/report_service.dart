@@ -3,6 +3,7 @@ import '../../core/qty.dart';
 import '../../data/store/data_store.dart';
 import '../models/documents.dart';
 import '../models/expense.dart';
+import '../models/labour.dart';
 import '../models/json_utils.dart';
 import '../models/operations.dart';
 import '../models/party.dart';
@@ -31,8 +32,13 @@ class DateRange {
 
 /// Gross profit summary. Operating expenses (rent, salaries, electricity)
 /// are not recorded in this system, so this is profit BEFORE expenses.
+///
+/// Only shop STOCK products count: their revenue after discounts minus their
+/// actual purchase cost. Non-stock items (screws, clips) are billed but have
+/// no recorded cost, and labour belongs to the worker, so both are reported
+/// separately and left out of profit.
 class ProfitSummary {
-  final Money grossSales; // completed invoices, after discounts
+  final Money grossSales; // shop stock products, after discounts
   final Money salesReturns;
   final Money netSales;
   final Money cogs; // cost of goods sold (FIFO) minus cost of returned goods
@@ -40,6 +46,9 @@ class ProfitSummary {
   final Money repairRevenue;
   final Money repairPartsCost;
   final int invoiceCount;
+  final Money nonStockSales; // billed, not in profit
+  final Money labourOnInvoices; // labour lines on older invoices (worker's)
+  final Money invoicedTotal; // everything billed on shop invoices
   const ProfitSummary({
     required this.grossSales,
     required this.salesReturns,
@@ -49,6 +58,9 @@ class ProfitSummary {
     required this.repairRevenue,
     required this.repairPartsCost,
     required this.invoiceCount,
+    this.nonStockSales = const Money.zero(),
+    this.labourOnInvoices = const Money.zero(),
+    this.invoicedTotal = const Money.zero(),
   });
 
   Money get grossProfitIncludingRepairs => grossProfit + repairRevenue - repairPartsCost;
@@ -59,16 +71,20 @@ class ProfitSummary {
 
 /// Profit & loss for a period.
 ///
-///   Gross sales (before discounts)
-///   − sales discounts (line + invoice)
+///   Gross sales of shop stock products (before discounts)
+///   − their discounts (line discounts + the invoice discount, which is
+///     taken from stock products first)
 ///   − sales returns
-///   = net sales
+///   = net product sales
 ///   − cost of goods sold (actual FIFO purchase cost of the units sold,
 ///     less the cost of units returned)
 ///   = GROSS PROFIT
 ///   + repair service profit (charges − parts cost)
 ///   − shop expenses
 ///   = NET OPERATING PROFIT
+///
+/// Non-stock items and labour are listed separately: billed to customers,
+/// but not shop profit (no recorded cost / the worker's money).
 ///
 /// Cash received is shown separately: credit sales count as sales when
 /// invoiced, but only payments actually received count as cash.
@@ -88,6 +104,10 @@ class FinancialSummary {
   final Money creditSales; // invoiced amount not paid at the time of sale
   final Money purchases;
   final Money customerOutstanding; // as of the end of the period
+  final Money nonStockSales; // screws, clips...: billed, not in profit
+  final Money labourOnInvoices; // labour lines on older invoices: worker's
+  final Money invoicedTotal; // everything billed on shop invoices
+  final LabourBillTotals labourBills; // separate labour bills (worker's)
   const FinancialSummary({
     required this.range,
     required this.invoiceCount,
@@ -104,8 +124,13 @@ class FinancialSummary {
     required this.creditSales,
     required this.purchases,
     required this.customerOutstanding,
+    this.nonStockSales = const Money.zero(),
+    this.labourOnInvoices = const Money.zero(),
+    this.invoicedTotal = const Money.zero(),
+    this.labourBills = const LabourBillTotals(),
   });
 
+  /// Net sales of shop stock products (the profit base).
   Money get netSales => grossSales - discounts - salesReturns;
   Money get grossProfit => netSales - cogs;
   Money get repairProfit => repairCharges - repairPartsCost;
@@ -116,14 +141,27 @@ class FinancialSummary {
   int get marginBp => netSales.isZero ? 0 : grossProfit.paisa * 10000 ~/ netSales.paisa;
 }
 
+/// Labour bills in a period: the workers' money, outside shop accounts.
+class LabourBillTotals {
+  final int count;
+  final Money billed;
+  final Money collected;
+  final Money paidToWorkers;
+  const LabourBillTotals({this.count = 0, this.billed = const Money.zero(), this.collected = const Money.zero(), this.paidToWorkers = const Money.zero()});
+}
+
 class ProductSalesRow {
   final String productId;
   final String name;
+  final SaleLineKind kind;
   Qty qty = const Qty.zero();
   Money revenue = const Money.zero();
   Money cogs = const Money.zero();
-  ProductSalesRow(this.productId, this.name);
-  Money get profit => revenue - cogs;
+  ProductSalesRow(this.productId, this.name, {this.kind = SaleLineKind.product});
+
+  /// Profit is only worked out for stock products (non-stock items have no
+  /// recorded cost; labour is the worker's).
+  Money get profit => kind == SaleLineKind.product ? revenue - cogs : const Money.zero();
 }
 
 class MonthPoint {
@@ -158,8 +196,8 @@ class ReportService {
   ProfitSummary profit(DateRange r) {
     final sales = _sales(r).toList();
     final returns = _salesReturns(r).toList();
-    final gross = Money.sum(sales.map((x) => x.total));
-    final ret = Money.sum(returns.map((x) => x.total));
+    final gross = Money.sum(sales.map((x) => x.productRevenue));
+    final ret = Money.sum(returns.map((x) => x.total)); // returns are stock products
     final cogs = Money.sum(sales.map((x) => x.cogs)) - Money.sum(returns.map((x) => x.costTotal));
     final repairs = ctx.all(Boxes.repairs, RepairJob.fromJson)
         .where((j) => j.status == RepairStatus.delivered && j.deliveryDate != null && r.contains(j.deliveryDate!))
@@ -174,6 +212,19 @@ class ReportService {
       repairRevenue: Money.sum(repairs.map((j) => j.totalCharges)),
       repairPartsCost: Money.sum(repairs.map((j) => j.partsCost)),
       invoiceCount: sales.length,
+      nonStockSales: Money.sum(sales.map((x) => x.nonStockRevenue)),
+      labourOnInvoices: Money.sum(sales.map((x) => x.labourRevenue)),
+      invoicedTotal: Money.sum(sales.map((x) => x.total)),
+    );
+  }
+
+  LabourBillTotals labourBills(DateRange r) {
+    final bills = ctx.all(Boxes.labourBills, LabourBill.fromJson).where((b) => !b.cancelled && r.contains(b.date)).toList();
+    return LabourBillTotals(
+      count: bills.length,
+      billed: Money.sum(bills.map((b) => b.total)),
+      collected: Money.sum(bills.map((b) => b.collected)),
+      paidToWorkers: Money.sum(bills.map((b) => b.paidToWorker)),
     );
   }
 
@@ -210,8 +261,8 @@ class ReportService {
     return FinancialSummary(
       range: r,
       invoiceCount: sales.length,
-      grossSales: Money.sum(sales.map((x) => x.subtotal)),
-      discounts: Money.sum(sales.map((x) => x.lineDiscounts + x.invoiceDiscount)),
+      grossSales: Money.sum(sales.map((x) => x.productGross)),
+      discounts: Money.sum(sales.map((x) => x.productDiscounts)),
       salesReturns: Money.sum(returns.map((x) => x.total)),
       cogs: Money.sum(sales.map((x) => x.cogs)) - Money.sum(returns.map((x) => x.costTotal)),
       repairCharges: Money.sum(repairs.map((j) => j.totalCharges)),
@@ -223,6 +274,10 @@ class ReportService {
       creditSales: Money.sum(sales.map((x) => x.remaining.isNegative ? const Money.zero() : x.remaining)),
       purchases: purchaseTotal(r),
       customerOutstanding: outstanding,
+      nonStockSales: Money.sum(sales.map((x) => x.nonStockRevenue)),
+      labourOnInvoices: Money.sum(sales.map((x) => x.labourRevenue)),
+      invoicedTotal: Money.sum(sales.map((x) => x.total)),
+      labourBills: labourBills(r),
     );
   }
 
@@ -236,17 +291,22 @@ class ReportService {
     ];
   }
 
-  Money salesTotal(DateRange r) => Money.sum(_sales(r).map((x) => x.total)) - Money.sum(_salesReturns(r).map((x) => x.total));
+  /// Shop sales: products and non-stock items, less returns. Labour (the
+  /// worker's money) is not shop sales.
+  Money salesTotal(DateRange r) => Money.sum(_sales(r).map((x) => x.shopSales)) - Money.sum(_salesReturns(r).map((x) => x.total));
   Money purchaseTotal(DateRange r) => Money.sum(purchases(r).map((x) => x.total));
 
+  /// Shop stock products only (the profit report). See [nonStockSales].
   List<ProductSalesRow> productSales(DateRange r) {
     final rows = <String, ProductSalesRow>{};
     for (final sale in _sales(r)) {
+      final rev = sale.lineRevenues();
       for (var k = 0; k < sale.items.length; k++) {
         final it = sale.items[k];
+        if (!it.isStock) continue;
         final row = rows.putIfAbsent(it.lineKey, () => ProductSalesRow(it.lineKey, it.name));
         row.qty += it.qty;
-        row.revenue += sale.lineRevenue(k);
+        row.revenue += rev[k];
         row.cogs += it.cogs;
       }
     }
@@ -261,10 +321,27 @@ class ReportService {
     return rows.values.toList()..sort((a, b) => b.revenue.compareTo(a.revenue));
   }
 
+  /// Non-stock items and (older) labour lines sold in the period: amount
+  /// billed after discounts. Not shop profit.
+  List<ProductSalesRow> nonStockSales(DateRange r) {
+    final rows = <String, ProductSalesRow>{};
+    for (final sale in _sales(r)) {
+      final rev = sale.lineRevenues();
+      for (var k = 0; k < sale.items.length; k++) {
+        final it = sale.items[k];
+        if (it.isStock) continue;
+        final row = rows.putIfAbsent(it.lineKey, () => ProductSalesRow(it.lineKey, it.name, kind: it.kind));
+        row.qty += it.qty;
+        row.revenue += rev[k];
+      }
+    }
+    return rows.values.toList()..sort((a, b) => b.revenue.compareTo(a.revenue));
+  }
+
   Map<String, Money> customerSales(DateRange r) {
     final out = <String, Money>{};
     for (final sale in _sales(r)) {
-      out[sale.customerName] = (out[sale.customerName] ?? const Money.zero()) + sale.total;
+      out[sale.customerName] = (out[sale.customerName] ?? const Money.zero()) + sale.shopSales;
     }
     return out;
   }

@@ -79,11 +79,11 @@ class _FinancePageState extends ConsumerState<FinancePage> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Text('Profit & Loss • $label', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: c.text)),
         const SizedBox(height: 10),
-        line('Total sales (before discounts)', f.grossSales),
-        line('Sales discounts', f.discounts, minus: true),
+        line('Shop stock product sales (before discounts)', f.grossSales),
+        line('Discounts on products', f.discounts, minus: true, note: 'Line discounts + bill discounts (taken from products first)'),
         line('Sales returns', f.salesReturns, minus: true),
         Divider(color: c.border),
-        line('Net sales', f.netSales, bold: true),
+        line('Net product sales', f.netSales, bold: true),
         line('Cost of goods sold', f.cogs, minus: true, note: 'Actual purchase cost (FIFO) of the units sold'),
         Divider(color: c.border),
         line('GROSS PROFIT', f.grossProfit, bold: true, color: f.grossProfit.isNegative ? c.danger : c.accent),
@@ -101,6 +101,20 @@ class _FinancePageState extends ConsumerState<FinancePage> {
             line('Refunds paid to customers', f.refundsPaid, minus: true),
             line('Sold on credit (not received at the sale)', f.creditSales, note: 'Counted in sales, not in cash'),
             line('Customer balances outstanding at period end', f.customerOutstanding),
+          ]),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          key: const ValueKey('fin-not-profit'),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: c.warning.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(10)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('Billed, but not shop profit', style: TextStyle(fontWeight: FontWeight.w700, color: c.text)),
+            line('Non-stock items (screws, clips, accessories)', f.nonStockSales, note: 'On invoices and payable; no recorded cost, so not in profit'),
+            if (!f.labourOnInvoices.isZero) line('Labour on older invoices', f.labourOnInvoices, note: "Worker's money, not shop income"),
+            line('Labour bills (${f.labourBills.count})', f.labourBills.billed, note: 'Separate labour bills: the worker\'s money'),
+            line('Labour collected / paid to workers', f.labourBills.collected, note: 'Paid to workers ${f.labourBills.paidToWorkers.format()}'),
+            line('Total billed on shop invoices', f.invoicedTotal),
           ]),
         ),
       ]),
@@ -167,7 +181,7 @@ class _FinancePageState extends ConsumerState<FinancePage> {
         ]),
         const SizedBox(height: 14),
         ResponsiveGrid(minItemWidth: 210, children: [
-          StatCard(label: 'Net sales', icon: Icons.point_of_sale, value: AnimatedMoney(f.netSales), caption: '${f.invoiceCount} invoices • after discounts & returns'),
+          StatCard(label: 'Net product sales', icon: Icons.point_of_sale, value: AnimatedMoney(f.netSales), caption: '${f.invoiceCount} invoices • stock products after discounts & returns'),
           StatCard(label: 'Gross profit', icon: Icons.trending_up, value: AnimatedMoney(f.grossProfit), tone: f.grossProfit.isNegative ? c.danger : c.accent, caption: 'Before expenses • margin ${(f.marginBp / 100).toStringAsFixed(1)}%'),
           StatCard(label: 'Total expenses', icon: Icons.receipt_long_outlined, value: AnimatedMoney(f.expenses), tone: c.danger),
           StatCard(label: 'Net operating profit', icon: Icons.account_balance, value: AnimatedMoney(f.netOperatingProfit), tone: f.netOperatingProfit.isNegative ? c.danger : c.accent),
@@ -206,7 +220,7 @@ class _FinancePageState extends ConsumerState<FinancePage> {
                 child: GroupedBarChart(
                   labels: [for (final m in months) DateFormat('MMM yy').format(m)],
                   bars: [
-                    BarSeries('Net sales', c.accent, [for (final x in monthly) x.netSales.paisa.toDouble()]),
+                    BarSeries('Net product sales', c.accent, [for (final x in monthly) x.netSales.paisa.toDouble()]),
                     BarSeries('Gross profit', const Color(0xFF6FB8FF), [for (final x in monthly) x.grossProfit.paisa.toDouble()]),
                     BarSeries('Expenses', c.danger.withValues(alpha: 0.85), [for (final x in monthly) x.expenses.paisa.toDouble()]),
                   ],
